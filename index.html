@@ -498,6 +498,22 @@ async function flushSheet() {
   renderReport();
 }
 
+// Any day not finished by 12:00 AM finishes itself with whatever was signed off. Runs on opening
+// the app as well as on the clock, so it still works if the iPad was asleep at midnight.
+function autoFinish() {
+  const today = isoDate(new Date());
+  const dates = [...new Set(state.pending.map(r => r.date))].filter(d => d !== today).sort();
+  if (!dates.length) return;
+  for (const date of dates) {
+    const night = { date, day: weekday(fromIso(date)), closedAt: '12:00 AM (automatic)',
+      records: state.pending.filter(r => r.date === date) };
+    state.nights.push(night);
+    state.unsent.push(night);
+  }
+  state.pending = state.pending.filter(r => r.date === today);
+  save();
+}
+
 // ---- Owner report page (one entry per night, added by the Close button) ----
 
 function renderReport() {
@@ -753,6 +769,7 @@ $('#close').addEventListener('click', e => {
   const btn = e.currentTarget;
   if (closedToday()) return;
   twoTap(btn, 'Tap again to finish today', () => {
+    autoFinish(); // in case midnight just passed and the clock hasn't caught up
     const d = new Date();
     const night = { date: isoDate(d), day: weekday(d), closedAt: timeLabel(d), records: state.pending };
     state.nights.push(night);
@@ -767,16 +784,19 @@ $('#close').addEventListener('click', e => {
   });
 });
 
-// Keep the clock current; redraw when the date changes (unlocks a closed day at 12:00 AM,
-// and weekly tasks differ by day).
+// Keep the clock current. At 12:00 AM: finish the day if nobody did, then redraw for the new day
+// (unlocks the checklist, and weekly tasks differ by day).
 setInterval(() => {
-  if (isoDate(new Date()) !== renderedDate) render();
-  else renderClock();
+  if (isoDate(new Date()) === renderedDate) return renderClock();
+  autoFinish();
+  render();
+  flushSheet();
 }, 15000);
 
 // Retry any nights the Google Sheet missed, whenever the iPad is back online.
 addEventListener('online', flushSheet);
 
+autoFinish();
 render();
 flushSheet();
 </script>
