@@ -215,9 +215,9 @@
 <div id="toast"></div>
 
 <script>
-// Google Sheet that receives each closed day. Paste the Apps Script web app URL here
+// Google Sheet that receives the weekly report. Paste the Apps Script web app URL here
 // (set it up with google-apps-script.gs — steps are at the top of that file).
-const SHEET_URL = '';
+const SHEET_URL = 'https://script.google.com/macros/s/AKfycbyynLF608zt5_9g7xR_hG9EtN3jCMXtEtbobwuqOvV3HClYVHebyfszgacW9-y3inJTQg/exec';
 
 // Passcode for the Owner button. Demo only: anyone who opens the page's code can read it.
 const OWNER_CODE = '1111';
@@ -294,7 +294,7 @@ const WEEKLY = {
 
 // ---- State (saved in the iPad's browser storage) ----
 // pending: today's sign-offs, not yet sent. nights: days sent to the Owner Report by the Close button.
-// unsent: nights the Google Sheet hasn't received yet (e.g. Wi-Fi was down); retried automatically.
+// unsent: nights the Google Sheet hasn't received yet; they go out as one week after Sunday's Finish.
 
 const STORE_KEY = 'cafe-checklist-v2';
 const emptyState = () => ({ pending: [], nights: [], unsent: [], employees: [...DEFAULT_EMPLOYEES] });
@@ -448,7 +448,19 @@ function removeSignOff(s, t, p, employee) {
   render();
 }
 
-// ---- Google Sheet (each closed night is sent as one batch) ----
+// ---- Google Sheet (one tab per week, Monday to Sunday, sent after Sunday's Finish) ----
+
+const mondayOf = iso => {
+  const d = fromIso(iso);
+  d.setDate(d.getDate() - (d.getDay() + 6) % 7);
+  return isoDate(d);
+};
+
+// A week goes out once Sunday is finished, or once it's over if nobody finished Sunday.
+function weekIsDue(monday) {
+  return mondayOf(isoDate(new Date())) !== monday
+    || state.nights.some(n => n.day === 'Sunday' && mondayOf(n.date) === monday);
+}
 
 // One row per step, so the sheet shows unsigned steps too.
 function sheetRows(night) {
@@ -463,16 +475,20 @@ function sheetRows(night) {
 
 let flushing = false;
 async function flushSheet() {
-  if (!SHEET_URL || flushing || !state.unsent.length) return;
+  if (!SHEET_URL || flushing) return;
   flushing = true;
-  while (state.unsent.length) {
+  for (const monday of new Set(state.unsent.map(n => mondayOf(n.date)))) {
+    if (!weekIsDue(monday)) continue;
+    // Always the whole week, so resending after "Undo finish" replaces the tab cleanly.
+    const nights = state.nights.filter(n => mondayOf(n.date) === monday);
     try {
       // no-cors: the browser can't read Google's reply, so any answer from the server counts as sent.
-      await fetch(SHEET_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ rows: sheetRows(state.unsent[0]) }) });
+      await fetch(SHEET_URL, { method: 'POST', mode: 'no-cors',
+        body: JSON.stringify({ tab: `Week of ${monday}`, rows: nights.flatMap(sheetRows) }) });
     } catch {
       break; // offline; try again later
     }
-    state.unsent.shift();
+    state.unsent = state.unsent.filter(n => mondayOf(n.date) !== monday);
     save();
   }
   flushing = false;
@@ -485,7 +501,7 @@ function renderReport() {
   $('#sheet-status').textContent = !SHEET_URL
     ? 'Google Sheet: not connected yet.'
     : state.unsent.length
-      ? `Google Sheet: ${state.unsent.length} ${state.unsent.length === 1 ? 'night' : 'nights'} waiting to send (will retry when online).`
+      ? `Google Sheet: ${state.unsent.length} ${state.unsent.length === 1 ? 'night' : 'nights'} waiting. The week sends after Sunday's Finish.`
       : 'Google Sheet: up to date.';
 
   const all = state.nights.flatMap(n => n.records);
@@ -524,8 +540,7 @@ function renderReport() {
     <table><tr><th>Employee</th><th>Sign-offs</th><th>Nights</th></tr>
       ${byEmployee.map(x => `<tr><td>${esc(x.label)}</td><td>${x.count}</td><td>${x.nights}</td></tr>`).join('')}
     </table>
-
-    <div class="actions"><button id="reset">Reset demo</button></div>`;
+`;
 }
 
 function nightReport(night, i) {
@@ -675,12 +690,6 @@ $('#report').addEventListener('click', e => {
       toast(`${name} removed. Their past sign-offs stay in the report.`);
     });
   }
-  if (e.target.id === 'reset') twoTap(e.target, 'Tap again to reset', () => {
-    state = { ...emptyState(), employees: state.employees }; // keep the staff list
-    save();
-    render();
-    toast('Demo reset.');
-  });
 });
 
 $('#report').addEventListener('submit', e => {
@@ -701,7 +710,7 @@ $('#owner').addEventListener('click', () => {
 });
 
 // Owner only: reopen today's checklist with everyone's names put back.
-// If the Google Sheet already got this night, closing again replaces that day's rows there.
+// If the Google Sheet already got this week, finishing again replaces that week's tab.
 function undoClose() {
   const night = closedToday();
   if (!night) return;
