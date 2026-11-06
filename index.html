@@ -7,18 +7,36 @@
 <meta name="apple-mobile-web-app-title" content="Checklist">
 <title>Cafe Shift Checklist</title>
 <style>
+  /* Look: Square POS style. System font, gray page, white cards, blue main action.
+     Every tap target is at least 44px tall for the iPad. */
+  :root {
+    --blue: #006aff;
+    --blue-dark: #0055cc;
+    --blue-tint: #e5f0ff;
+    --green: #00892e;
+    --green-tint: #e0f5e7;
+    --red: #bf0020;
+    --ink: #1a1a1a;
+    --muted: #6b6b6b;
+    --fill: #f0f0f0;
+    --line: #e1e1e1;
+    --page: #f5f5f5;
+    --top: calc(72px + env(safe-area-inset-top));
+  }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    background: #fff;
-    color: #000;
-    font-family: "Times New Roman", Times, serif;
-    font-size: 18px;
+    background: var(--page);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 17px;
+    line-height: 1.3;
+    -webkit-text-size-adjust: 100%;
     -webkit-tap-highlight-color: transparent;
   }
   button {
     font: inherit;
-    color: #000;
+    color: inherit;
     background: none;
     border: none;
     padding: 0;
@@ -29,63 +47,140 @@
     user-select: none;
     -webkit-touch-callout: none;
   }
-  main { max-width: 820px; margin: 0 auto; padding: 24px 20px 80px; }
-  header h1 { font-size: 30px; margin: 0 0 4px; }
-  header p { margin: 0 0 20px; font-size: 20px; }
-
-  #close, #owner {
-    position: fixed;
-    top: 16px;
-    z-index: 10;
-    padding: 8px 18px;
-    border: 1px solid #000;
-    background: #fff;
-    font-weight: bold;
-  }
-  #close { right: 16px; }
-  #owner { left: 16px; }
-  main { padding-top: 64px; }
+  button:disabled { cursor: default; }
+  main { max-width: 1080px; margin: 0 auto; padding: calc(var(--top) + 24px) 24px 80px; }
   body.owner-mode #close, body.owner-mode #checklist { display: none; }
   body:not(.owner-mode) #owner-page { display: none; }
 
-  /* Shift dropdowns */
-  details.section { border: 1px solid #000; margin: 14px 0; }
-  details.section > summary {
+  /* Top bar */
+  #topbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 10;
     display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    padding: 14px 16px;
-    font-size: 22px;
-    font-weight: bold;
+    align-items: center;
+    gap: 16px;
+    height: var(--top);
+    padding: env(safe-area-inset-top) 16px 0;
+    background: #fff;
+    border-bottom: 1px solid var(--line);
+  }
+  #day { flex: 1; text-align: center; font-size: 16px; font-weight: 500; color: var(--muted); }
+  #owner, #close { height: 48px; padding: 0 20px; border-radius: 6px; font-weight: 600; white-space: nowrap; }
+  #owner { background: var(--fill); }
+  #owner:active { background: var(--line); }
+  #close { background: var(--blue); color: #fff; }
+  #close:active { background: var(--blue-dark); }
+  #close:disabled { background: var(--fill); color: var(--muted); }
+
+  header { margin-bottom: 20px; }
+  header h1 { margin: 0 0 6px; font-size: 30px; font-weight: 700; }
+  header p { margin: 0; color: var(--muted); }
+  .bar { height: 8px; margin-top: 10px; border-radius: 4px; background: var(--line); overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--blue); }
+
+  /* Dropdowns: shifts, tasks, and the owner's days */
+  details.section {
+    margin: 12px 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    overflow: hidden;
+  }
+  details.section > summary, details.task > summary {
+    display: flex;
+    align-items: center;
+    gap: 12px;
     list-style: none;
     cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
   }
-  details.section > summary::-webkit-details-marker { display: none; }
-  details.section > summary::before { content: "▸"; margin-right: 10px; }
-  details.section[open] > summary::before { content: "▾"; }
-  details.section > summary .label { flex: 1; }
-  details.section > summary .count { font-weight: normal; font-size: 16px; }
+  details.section > summary { min-height: 72px; padding: 12px 20px; font-size: 21px; font-weight: 600; }
+  details.task > summary { min-height: 60px; padding: 8px 20px; font-size: 18px; font-weight: 600; }
+  #owner-page details.section > summary { min-height: 60px; font-size: 18px; }
+  summary::-webkit-details-marker { display: none; }
+  summary .label { flex: 1; display: flex; align-items: center; gap: 10px; }
+  summary::after {
+    content: "";
+    flex: none;
+    width: 10px;
+    height: 10px;
+    margin: -4px 4px 0 4px;
+    border-right: 2px solid var(--muted);
+    border-bottom: 2px solid var(--muted);
+    transform: rotate(45deg);
+  }
+  details[open] > summary::after { margin-top: 4px; transform: rotate(-135deg); }
+  .count {
+    flex: none;
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: var(--fill);
+    color: var(--muted);
+    font-size: 15px;
+    font-weight: 500;
+  }
+  details.done > summary .count { background: var(--green-tint); color: var(--green); }
+  details.done > summary .label::before, .step.done .name::before { background: var(--green); border-color: var(--green); color: #fff; content: "✓"; }
+  details.done > summary .label::before {
+    flex: none;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    font-size: 15px;
+    line-height: 26px;
+    text-align: center;
+  }
 
-  .task { border-top: 1px solid #000; padding: 12px 16px; }
-  .task h3 { margin: 0 0 4px; font-size: 20px; font-weight: normal; text-decoration: underline; }
-  .task-head { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
-  .check-off { font-weight: bold; font-size: 16px; padding: 10px 0 10px 16px; }
-  .chip { white-space: nowrap; }
-  .chip .x { display: none; padding: 10px 8px; font-size: 18px; font-weight: bold; line-height: 1; }
-  .chip .who { padding: 10px 2px; }
-  .chip.armed .who { text-decoration: underline; }
-  .chip.armed .x { display: inline; }
-  .step {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 16px;
-    padding: 0;
+  .task { border-top: 1px solid var(--line); }
+  .task-body { padding: 0 20px 8px; }
+  .check-off {
+    flex: none;
+    min-height: 44px;
+    padding: 0 16px;
+    border-radius: 6px;
+    background: var(--blue-tint);
+    color: var(--blue);
+    font-size: 15px;
+    font-weight: 600;
   }
-  .step + .step { border-top: 1px solid #d1d1d6; }
-  .step button { font-weight: bold; text-align: left; }
-  .step .do { padding: 12px 0; }
-  .saved { font-size: 15px; text-align: right; }
+  .check-off:active { background: #cfe2ff; }
+  details.task:not([open]) .check-off { display: none; }
+
+  /* One step: name on the left, who signed on the right */
+  .step {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 42%;
+    align-items: center;
+    gap: 16px;
+    min-height: 60px;
+  }
+  .step + .step { border-top: 1px solid var(--line); }
+  .do { text-align: left; }
+  .do:active { opacity: 0.6; }
+  .do:disabled { opacity: 1; }
+  .name { display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 8px 0; font-weight: 500; }
+  .name::before {
+    content: "";
+    flex: none;
+    width: 26px;
+    height: 26px;
+    border: 2px solid #b5b5b5;
+    border-radius: 50%;
+    font-size: 15px;
+    line-height: 22px;
+    text-align: center;
+  }
+  .step.plain .name::before { display: none; }
+  .hint { min-height: 60px; text-align: right; color: var(--blue); font-size: 15px; font-weight: 600; }
+  .hint:disabled { color: var(--muted); font-weight: 400; }
+  .saved { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; padding: 8px 0; }
+  .chip { min-height: 44px; padding: 0 12px; border-radius: 6px; background: var(--fill); font-size: 15px; font-weight: 500; }
+  .chip:active { background: var(--line); }
+  .chip b { margin-left: 4px; color: var(--blue); font-weight: 600; }
 
   /* Apple-style context menu */
   .overlay {
@@ -98,7 +193,7 @@
   }
   .menu {
     position: fixed;
-    width: 260px;
+    width: 280px;
     overflow-y: auto;
     border-radius: 13px;
     background: rgba(250, 250, 250, 0.88);
@@ -119,7 +214,7 @@
     display: flex;
     justify-content: space-between;
     width: 100%;
-    padding: 11px 16px;
+    padding: 12px 16px;
     font-size: 17px;
     text-align: left;
     border-bottom: 0.5px solid rgba(60, 60, 67, 0.29);
@@ -127,81 +222,123 @@
   .menu button:last-child { border-bottom: none; }
   .menu button:active { background: rgba(0, 0, 0, 0.08); }
   .menu button.done { color: #8e8e93; cursor: default; }
+  .time-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 16px;
+    border-bottom: 0.5px solid rgba(60, 60, 67, 0.29);
+  }
+  .time-row:last-child { border-bottom: none; }
+  .menu .time-row button { width: auto; min-height: 44px; align-items: center; padding: 0 0 0 16px; border: none; color: var(--red); font-size: 15px; font-weight: 600; }
 
-  /* Owner passcode (Apple-style keypad) */
+  /* Owner passcode keypad */
   .passcode {
     position: fixed;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    padding: 28px 32px 22px;
-    border-radius: 13px;
+    padding: 28px 28px 22px;
+    border-radius: 12px;
     background: #fff;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.22), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.22);
     text-align: center;
   }
-  .passcode h2 { margin: 0 0 16px; font-size: 22px; }
+  .passcode h2 { margin: 0 0 16px; font-size: 21px; font-weight: 600; }
   .dots { display: flex; justify-content: center; gap: 18px; margin-bottom: 24px; }
-  .dots span { width: 14px; height: 14px; border-radius: 50%; background: #c7c7cc; }
-  .dots span.on { background: #000; }
+  .dots span { width: 14px; height: 14px; border-radius: 50%; background: var(--line); }
+  .dots span.on { background: var(--ink); }
   .dots.shake { animation: shake 0.4s; }
   @keyframes shake { 20%, 60% { transform: translateX(-10px); } 40%, 80% { transform: translateX(10px); } }
-  .keys { display: grid; grid-template-columns: repeat(3, 72px); gap: 14px 22px; }
-  .keys button { height: 72px; border-radius: 50%; background: #e5e5ea; font-size: 30px; font-weight: bold; }
-  .keys button:active { background: #c7c7cc; }
-  .keys button.text { background: none; font-size: 17px; }
+  .keys { display: grid; grid-template-columns: repeat(3, 96px); gap: 10px; }
+  .keys button { height: 72px; border-radius: 6px; background: var(--fill); font-size: 26px; font-weight: 500; }
+  .keys button:active { background: var(--line); }
+  .keys button.text { background: none; color: var(--blue); font-size: 16px; font-weight: 600; }
 
   /* Owner report page */
-  .report-body { border-top: 1px solid #000; padding: 12px 16px; }
-  .report-body h4 { margin: 14px 0 6px; font-size: 17px; }
-  .report-body h4:first-child { margin-top: 4px; }
-  #owner-page h2 { margin: 28px 0 4px; font-size: 22px; }
+  #owner-page h2 { margin: 32px 0 10px; font-size: 21px; font-weight: 600; }
   #owner-page p { margin: 8px 0; }
-  table { border-collapse: collapse; width: 100%; font-size: 15px; }
-  th, td { border: 1px solid #000; padding: 5px 8px; text-align: left; }
-  .actions { display: flex; gap: 12px; margin-top: 28px; }
-  .actions button { border: 1px solid #000; padding: 8px 14px; font-weight: bold; }
-  .notice { border: 1px solid #000; padding: 12px 16px; font-weight: bold; }
+  #owner-page header p { margin: 0; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .stats div { padding: 16px 20px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+  .stats b { display: block; font-size: 32px; font-weight: 700; }
+  .stats span { color: var(--muted); font-size: 15px; }
+  .report-body { padding: 4px 20px 16px; border-top: 1px solid var(--line); }
+  .report-body h4 { margin: 16px 0 6px; font-size: 17px; font-weight: 600; }
+  .card { border: 1px solid var(--line); border-radius: 8px; background: #fff; overflow: hidden; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; background: #fff; }
+  th, td { padding: 12px 14px; border-bottom: 1px solid var(--line); text-align: left; }
+  tr:last-child td { border-bottom: none; }
+  th { color: var(--muted); font-weight: 600; }
+  .actions { display: flex; gap: 12px; margin-top: 16px; }
+  .actions button, .remove-emp {
+    min-height: 48px;
+    padding: 0 18px;
+    border-radius: 6px;
+    background: var(--fill);
+    font-weight: 600;
+  }
+  .remove-emp { min-height: 44px; color: var(--red); font-size: 15px; }
+  .notice { padding: 14px 18px; border-radius: 8px; background: var(--blue-tint); font-weight: 500; }
 
   /* Owner: add / remove employees */
-  .add-row { display: flex; gap: 12px; margin: 4px 0 8px; }
+  .add-row { display: flex; gap: 12px; margin: 12px 0; }
   .add-row input {
     flex: 1;
     min-width: 0;
-    padding: 10px 12px;
-    border: 1px solid #000;
-    border-radius: 0;
+    height: 48px;
+    padding: 0 14px;
+    border: 1px solid #b5b5b5;
+    border-radius: 6px;
     -webkit-appearance: none;
     appearance: none;
     background: #fff;
-    color: #000;
+    color: var(--ink);
     font: inherit;
-    font-size: 18px; /* 16px+ so iPad Safari doesn't zoom in on focus */
+    font-size: 17px; /* 16px+ so iPad Safari doesn't zoom in on focus */
   }
-  .add-row button, .remove-emp { border: 1px solid #000; padding: 10px 16px; font-weight: bold; }
-  .emp { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; }
-  .emp + .emp, .add-row + .emp { border-top: 1px solid #d1d1d6; }
-  button:disabled { color: #000; opacity: 1; cursor: default; }
+  .add-row button { min-height: 48px; padding: 0 22px; border-radius: 6px; background: var(--blue); color: #fff; font-weight: 600; }
+  .emp { display: flex; justify-content: space-between; align-items: center; min-height: 60px; }
+  .emp + .emp, .add-row + .emp { border-top: 1px solid var(--line); }
 
   #toast {
     position: fixed;
     left: 50%;
     bottom: 24px;
+    z-index: 60;
     transform: translateX(-50%);
-    padding: 10px 18px;
-    border: 1px solid #000;
-    background: #fff;
+    padding: 12px 20px;
+    border-radius: 6px;
+    background: var(--ink);
+    color: #fff;
     display: none;
+  }
+
+  /* Phones, for anyone viewing the demo away from the iPad */
+  @media (max-width: 640px) {
+    main { padding-left: 12px; padding-right: 12px; }
+    #day { font-size: 13px; }
+    #owner, #close { padding: 0 12px; font-size: 15px; }
+    .step { display: block; padding-bottom: 8px; }
+    .hint { min-height: 36px; padding-left: 38px; text-align: left; }
+    .saved { justify-content: flex-start; padding: 0 0 0 38px; }
+    .step.plain .hint, .step.plain .saved { padding-left: 0; }
+    .stats { grid-template-columns: 1fr; }
   }
 </style>
 </head>
 <body>
-<button id="owner">Owner</button>
-<button id="close">Finish</button>
+<div id="topbar">
+  <button id="owner">Owner</button>
+  <div id="day"></div>
+  <button id="close">Finish Day</button>
+</div>
 <main id="checklist">
   <header>
-    <h1>Cafe Shift Checklist</h1>
-    <p id="day"></p>
+    <h1>Shift Checklist</h1>
+    <p id="progress"></p>
+    <div class="bar"><i id="bar"></i></div>
   </header>
   <div id="sections"></div>
 </main>
@@ -255,7 +392,8 @@ const SHIFTS = [
     { name: 'Water Station', steps: ['Refill completely with fresh water and ice, restock cups'] },
     { name: 'Cold Brew Stock & TDS', steps: ['Inventory TDS (2.50) check / make cold brew as needed (fewer than 4 full jugs in fridge)'] },
   ] },
-  { id: 'mid', short: 'Mid-Shift', label: 'Mid-Shift Tasks', tasks: [
+  // repeats: done again and again through the shift, so no green "done" marks.
+  { id: 'mid', short: 'Mid-Shift', label: 'Mid-Shift Tasks', repeats: true, tasks: [
     { name: 'Lobby & Floor', steps: ['Collect dishes & wipe down all tables (including patio)',
       'Check floors (spot clean if needed)', 'Maintain clean customer area'] },
     { name: 'Restroom', steps: ['Check toilet paper (min. 2 rolls)', 'Refill paper towels & soap',
@@ -375,37 +513,55 @@ function render() {
   renderClock();
   const closed = closedToday();
   const records = closed ? closed.records : state.pending;
+  const today = progress(renderedDay, records);
+  $('#progress').textContent = `${today.done} of ${today.total} steps signed today`;
+  $('#bar').style.width = `${today.done / today.total * 100}%`;
 
   const close = $('#close');
   close.disabled = !!closed;
-  if (!close.dataset.armed) close.textContent = closed ? 'Finished' : 'Finish';
+  if (!close.dataset.armed) close.textContent = closed ? 'Day Finished' : 'Finish Day';
 
   $('#sections').innerHTML = (closed
     ? `<p class="notice">Today was finished at ${esc(closed.closedAt)}. The checklist opens again at 12:00 AM.</p>`
     : '') + sectionsFor(renderedDay).map((s, si) => {
     const steps = s.tasks.flatMap(t => t.steps.map(p => signers(records, s.short, t.name, p).length));
     const done = steps.filter(Boolean).length;
-    return `<details class="section" data-id="${s.id}" ${openIds.has(s.id) ? 'open' : ''}>
-      <summary><span class="label">${esc(s.label)}</span><span class="count">${done}/${steps.length}</span></summary>
-      ${s.tasks.map((t, ti) => `<div class="task">
-        ${t.hideTitle ? '' : `<div class="task-head"><h3>${esc(t.name)}</h3>
-          ${closed ? '' : `<button class="check-off" data-s="${si}" data-t="${ti}">Check off</button>`}</div>`}
-        ${t.steps.map((p, pi) => {
-          const names = signers(records, s.short, t.name, p).map(r => r.employee);
-          const chips = closed ? names.map(esc) : names.map(n =>
-            `<span class="chip" data-s="${si}" data-t="${ti}" data-p="${pi}" data-name="${esc(n)}"><button class="who">${esc(n)}</button><button class="x" aria-label="Remove ${esc(n)}">×</button></span>`);
-          return `<div class="step">
-            <button class="do" data-s="${si}" data-t="${ti}" data-p="${pi}" ${closed ? 'disabled' : ''}>${esc(p)}</button>
-            ${names.length ? `<span class="saved">${chips.join(', ')}</span>` : ''}
+    return `<details class="section${done === steps.length && !s.repeats ? ' done' : ''}" data-id="${s.id}" ${openIds.has(s.id) ? 'open' : ''}>
+      <summary><span class="label">${esc(s.label)}</span><span class="count">${done} of ${steps.length} signed</span></summary>
+      ${s.tasks.map((t, ti) => {
+        const rows = t.steps.map((p, pi) => {
+          const signed = signers(records, s.short, t.name, p).map(r => r.employee);
+          const names = [...new Set(signed)];
+          const at = `data-s="${si}" data-t="${ti}" data-p="${pi}"`;
+          const chips = names.map(n => {
+            const times = signed.filter(x => x === n).length;
+            return `<button class="chip" ${at} data-name="${esc(n)}">${esc(n)}${times > 1 ? `<b>×${times}</b>` : ''}</button>`;
+          });
+          return `<div class="step${s.repeats ? ' plain' : names.length ? ' done' : ''}">
+            <button class="do name" ${at} ${closed ? 'disabled' : ''}>${esc(p)}</button>
+            ${names.length
+              ? `<div class="saved">${chips.join('')}</div>`
+              : `<button class="do hint" ${at} ${closed ? 'disabled' : ''}>${closed ? 'Not signed' : 'Tap to sign'}</button>`}
           </div>`;
-        }).join('')}
-      </div>`).join('')}
+        }).join('');
+        if (t.hideTitle) return `<div class="task"><div class="task-body">${rows}</div></div>`;
+        const id = `${s.id}-${ti}`;
+        const signed = t.steps.filter(p => signers(records, s.short, t.name, p).length).length;
+        return `<details class="task${signed === t.steps.length && !s.repeats ? ' done' : ''}" data-id="${id}" ${openIds.has(id) ? 'open' : ''}>
+          <summary>
+            <span class="label">${esc(t.name)}</span>
+            ${closed ? '' : `<button class="check-off" data-s="${si}" data-t="${ti}">Sign all steps</button>`}
+            <span class="count">${signed} of ${t.steps.length}</span>
+          </summary>
+          <div class="task-body">${rows}</div>
+        </details>`;
+      }).join('')}
     </details>`;
   }).join('');
   renderReport();
 }
 
-// Name menu for one step, or for a whole task ("Check off"). A ✓ means already signed.
+// Name menu for one step, or for a whole task ("Sign all steps"). A ✓ means already signed.
 function openMenu(btn, title, signed, onPick, alignRight) {
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
@@ -414,15 +570,7 @@ function openMenu(btn, title, signed, onPick, alignRight) {
     return `<button data-name="${esc(e)}" class="${done ? 'done' : ''}"><span>${esc(e)}</span><span>${done ? '✓' : ''}</span></button>`;
   }).join('')}</div>`;
   document.body.appendChild(overlay);
-
-  const menu = overlay.firstChild;
-  menu.style.maxHeight = `${innerHeight - 20}px`;
-  if (alignRight) menu.style.transformOrigin = 'top right';
-  const r = btn.getBoundingClientRect();
-  const top = r.bottom + 6 + menu.offsetHeight > innerHeight - 10 ? r.top - menu.offsetHeight - 6 : r.bottom + 6;
-  const left = alignRight ? r.right - menu.offsetWidth : r.left;
-  menu.style.top = `${Math.max(10, Math.min(top, innerHeight - menu.offsetHeight - 10))}px`;
-  menu.style.left = `${Math.max(10, Math.min(left, innerWidth - menu.offsetWidth - 10))}px`;
+  placeMenu(overlay.firstChild, btn, alignRight);
 
   overlay.addEventListener('click', e => {
     const b = e.target.closest('button[data-name]');
@@ -432,10 +580,39 @@ function openMenu(btn, title, signed, onPick, alignRight) {
   });
 }
 
+// Popup from a name on a step: each time that person signed it. Remove is there until the day is finished.
+function openTimes(chip, s, t, p, name) {
+  const closed = closedToday();
+  const rows = signers(closed ? closed.records : state.pending, s.short, t.name, p).filter(r => r.employee === name);
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `<div class="menu"><div class="head">${esc(name)}</div>${rows.map(r => `<div class="time-row">
+    <span>${esc(r.time)}</span>${closed ? '' : `<button data-time="${esc(r.time)}">Remove</button>`}</div>`).join('')}</div>`;
+  document.body.appendChild(overlay);
+  placeMenu(overlay.firstChild, chip);
+
+  overlay.addEventListener('click', e => {
+    const b = e.target.closest('button[data-time]');
+    if (b) removeSignOff(s, t, p, name, b.dataset.time);
+    if (b || e.target === overlay) overlay.remove();
+  });
+}
+
+function placeMenu(menu, btn, alignRight) {
+  menu.style.maxHeight = `${innerHeight - 20}px`;
+  if (alignRight) menu.style.transformOrigin = 'top right';
+  const r = btn.getBoundingClientRect();
+  const top = r.bottom + 6 + menu.offsetHeight > innerHeight - 10 ? r.top - menu.offsetHeight - 6 : r.bottom + 6;
+  const left = alignRight ? r.right - menu.offsetWidth : r.left;
+  menu.style.top = `${Math.max(10, Math.min(top, innerHeight - menu.offsetHeight - 10))}px`;
+  menu.style.left = `${Math.max(10, Math.min(left, innerWidth - menu.offsetWidth - 10))}px`;
+}
+
 function signOff(s, t, steps, employee) {
   const d = new Date();
   for (const p of steps) {
-    if (signers(state.pending, s.short, t.name, p).some(r => r.employee === employee)) continue;
+    // Mid-Shift tasks repeat, so the same person can sign again. Everything else is once a day.
+    if (!s.repeats && signers(state.pending, s.short, t.name, p).some(r => r.employee === employee)) continue;
     state.pending.push({
       date: isoDate(d), day: weekday(d), shift: s.short, task: t.name, step: p, employee, time: timeLabel(d),
     });
@@ -444,9 +621,11 @@ function signOff(s, t, steps, employee) {
   render();
 }
 
-function removeSignOff(s, t, p, employee) {
-  state.pending = state.pending.filter(r =>
-    !(r.shift === s.short && r.task === t.name && r.step === p && r.employee === employee));
+// Removes one sign-off: a person can have several on a Mid-Shift step.
+function removeSignOff(s, t, p, employee, time) {
+  const i = state.pending.findIndex(r =>
+    r.shift === s.short && r.task === t.name && r.step === p && r.employee === employee && r.time === time);
+  if (i >= 0) state.pending.splice(i, 1);
   save();
   render();
 }
@@ -520,7 +699,7 @@ function renderReport() {
   $('#sheet-status').textContent = !SHEET_URL
     ? 'Google Sheet: not connected yet.'
     : state.unsent.length
-      ? `Google Sheet: ${state.unsent.length} ${state.unsent.length === 1 ? 'night' : 'nights'} waiting. The week sends after Sunday's Finish.`
+      ? `Google Sheet: ${state.unsent.length} ${state.unsent.length === 1 ? 'day' : 'days'} waiting. The week sends after Sunday's Finish.`
       : 'Google Sheet: up to date.';
 
   const all = state.nights.flatMap(n => n.records);
@@ -531,15 +710,35 @@ function renderReport() {
     return { e, label: former.includes(e) ? `${e} (former)` : e, count: rows.length, nights: new Set(rows.map(r => r.date)).size };
   }).sort((a, b) => b.count - a.count);
 
+  // Missed steps are only counted for the whole team: without a schedule, nobody knows
+  // whose step it was. Square shifts would make this per person.
+  const team = state.nights.map(n => progress(n.day, n.records));
+  const done = team.reduce((sum, p) => sum + p.done, 0);
+  const total = team.reduce((sum, p) => sum + p.total, 0);
+
   const closed = closedToday();
   $('#report').innerHTML = `
     ${closed ? `<p class="notice">Today was finished at ${esc(closed.closedAt)}. If that was a mistake, undo it to reopen the checklist.</p>
       <div class="actions"><button id="undo-close">Undo finish</button></div>` : ''}
 
-    <h2>Passcode</h2>
-    <div class="actions"><button id="change-code">Change passcode</button></div>
+    <div class="stats">
+      <div><b>${total ? `${Math.round(done / total * 100)}%` : '—'}</b><span>Steps signed</span></div>
+      <div><b>${total - done}</b><span>Steps missed</span></div>
+      <div><b>${state.nights.length}</b><span>Days reported</span></div>
+    </div>
 
-    <h2>Staff</h2>
+    <h2>Sign-offs by employee</h2>
+    <div class="card"><table><tr><th>Employee</th><th>Sign-offs</th><th>Days</th><th>Share</th></tr>
+      ${byEmployee.map(x => `<tr><td>${esc(x.label)}</td><td>${x.count}</td><td>${x.nights}</td>
+        <td>${all.length ? Math.round(x.count / all.length * 100) : 0}%</td></tr>`).join('')}
+    </table></div>
+
+    <h2>Days</h2>
+    ${state.nights.length
+      ? state.nights.map((n, i) => nightReport(n, i)).reverse().join('')
+      : '<p>No days finished yet. Each day shows up here after Finish, or at 12:00 AM if nobody taps it.</p>'}
+
+    <h2>Settings</h2>
     <details class="section" data-id="employees" ${openIds.has('employees') ? 'open' : ''}>
       <summary><span class="label">Employees</span><span class="count">${state.employees.length} people</span></summary>
       <div class="report-body">
@@ -552,17 +751,7 @@ function renderReport() {
           <button class="remove-emp" data-name="${esc(e)}">Remove</button></div>`).join('')}
       </div>
     </details>
-
-    <h2>Nights</h2>
-    ${state.nights.length
-      ? state.nights.map((n, i) => nightReport(n, i)).reverse().join('')
-      : '<p>No nights finished yet. Tap Finish at the end of the day to send that day here.</p>'}
-
-    <h2>Sign-offs by employee</h2>
-    <table><tr><th>Employee</th><th>Sign-offs</th><th>Nights</th></tr>
-      ${byEmployee.map(x => `<tr><td>${esc(x.label)}</td><td>${x.count}</td><td>${x.nights}</td></tr>`).join('')}
-    </table>
-`;
+    <div class="actions"><button id="change-code">Change passcode</button></div>`;
 }
 
 function nightReport(night, i) {
@@ -570,7 +759,7 @@ function nightReport(night, i) {
   const id = `night-${i}`;
   return `<details class="section" data-id="${id}" ${openIds.has(id) ? 'open' : ''}>
     <summary><span class="label">${esc(dateLabel(fromIso(night.date)))} — finished ${esc(night.closedAt)}</span>
-      <span class="count">${p.done}/${p.total} signed</span></summary>
+      <span class="count">${p.done} of ${p.total} signed</span></summary>
     <div class="report-body">
       ${sectionsFor(night.day).map(s => `<h4>${esc(s.short)}</h4>
         <table><tr><th>Task</th><th>Step</th><th>Signed by</th></tr>
@@ -654,7 +843,7 @@ function changePasscode() {
 
 function showOwnerPage(show) {
   document.body.classList.toggle('owner-mode', show);
-  $('#owner').textContent = show ? 'Back' : 'Owner';
+  $('#owner').textContent = show ? 'Back to Checklist' : 'Owner';
   if (show) renderReport();
   scrollTo(0, 0);
 }
@@ -690,35 +879,35 @@ function toast(msg) {
 document.addEventListener('toggle', e => {
   const id = e.target.dataset && e.target.dataset.id;
   if (!id) return;
-  if (e.target.open) openIds.add(id); else openIds.delete(id);
+  if (e.target.open) return openIds.add(id);
+  openIds.delete(id);
+  // Closing a shift also closes the tasks inside it.
+  e.target.querySelectorAll('details.task').forEach(task => {
+    task.open = false;
+    openIds.delete(task.dataset.id);
+  });
 }, true);
 
 $('#sections').addEventListener('click', e => {
   const el = e.target.closest('[data-s]');
-  if (!el || closedToday()) return;
+  if (!el) return;
   const s = sectionsFor(renderedDay)[el.dataset.s];
   const t = s.tasks[el.dataset.t];
   const p = t.steps[el.dataset.p];
 
-  if (el.classList.contains('do')) {
-    openMenu(el, p, signers(state.pending, s.short, t.name, p).map(r => r.employee), name => signOff(s, t, [p], name));
-  } else if (el.classList.contains('check-off')) {
-    // ✓ only for people already signed on every step of this task.
-    const signedAll = state.employees.filter(e => t.steps.every(step =>
-      signers(state.pending, s.short, t.name, step).some(r => r.employee === e)));
-    openMenu(el, `${t.name} — check off`, signedAll, name => signOff(s, t, t.steps, name), true);
-  } else if (e.target.classList.contains('x')) {
-    removeSignOff(s, t, p, el.dataset.name);
-  } else if (e.target.classList.contains('who')) {
-    const armed = el.classList.contains('armed');
-    document.querySelectorAll('.chip.armed').forEach(c => c.classList.remove('armed'));
-    el.classList.toggle('armed', !armed);
-  }
-});
+  if (el.classList.contains('chip')) return openTimes(el, s, t, p, el.dataset.name);
+  if (closedToday()) return;
 
-// Tapping anywhere else hides the × next to a name.
-document.addEventListener('click', e => {
-  if (!e.target.closest('.chip')) document.querySelectorAll('.chip.armed').forEach(c => c.classList.remove('armed'));
+  if (el.classList.contains('do')) {
+    const signedStep = s.repeats ? [] : signers(state.pending, s.short, t.name, p).map(r => r.employee);
+    openMenu(el, p, signedStep, name => signOff(s, t, [p], name));
+  } else if (el.classList.contains('check-off')) {
+    e.preventDefault(); // it sits on the dropdown's title row; don't close the dropdown
+    // ✓ only for people already signed on every step of this task.
+    const signedAll = s.repeats ? [] : state.employees.filter(e => t.steps.every(step =>
+      signers(state.pending, s.short, t.name, step).some(r => r.employee === e)));
+    openMenu(el, `${t.name}: sign all steps`, signedAll, name => signOff(s, t, t.steps, name), true);
+  }
 });
 
 $('#report').addEventListener('click', e => {
