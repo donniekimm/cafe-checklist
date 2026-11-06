@@ -182,6 +182,59 @@
   .chip:active { background: var(--line); }
   .chip b { margin-left: 4px; color: var(--blue); font-weight: 600; }
 
+  /* Break schedule: same rows and columns as the paper sheet */
+  .break-wrap { padding: 0 20px 14px; border-top: 1px solid var(--line); }
+  .break-table { margin-top: 16px; table-layout: fixed; border: 1px solid #b5b5b5; }
+  .break-table th {
+    padding: 0;
+    border: 1px solid var(--ink);
+    background: var(--ink);
+    color: #fff;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    text-align: center;
+    text-transform: uppercase;
+  }
+  .break-head { display: block; width: 100%; min-height: 48px; padding: 4px 8px; font: inherit; letter-spacing: inherit; text-transform: inherit; }
+  .break-table td, .break-table tr:last-child td { padding: 0; border: 1px solid #b5b5b5; }
+  .break-cell { display: block; width: 100%; min-height: 56px; padding: 6px 8px; font-weight: 500; text-align: center; }
+  .break-cell:active { background: var(--fill); }
+  .break-cell.empty { color: #8a8a8a; font-weight: 400; }
+  .break-note { margin: 10px 0 0; color: var(--muted); font-size: 14px; font-style: italic; }
+
+  /* Lobby / Restroom check log: same rows and columns as the paper sheet */
+  .log-desc { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; color: var(--muted); font-size: 14px; }
+  .log-desc h4 { margin: 0 0 2px; color: var(--ink); font-size: 14px; font-weight: 600; }
+  .log-desc ul { margin: 0; padding-left: 18px; }
+  .log-rule { margin: 10px 0 0; color: var(--muted); font-size: 14px; font-style: italic; }
+  .log-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .log-table { min-width: 620px; margin-top: 10px; }
+  .log-table th { padding: 14px 6px; font-size: 13px; }
+  .log-table th:first-child { width: 13%; }
+  .log-table th:nth-child(2) { width: 22%; }
+  .log-table th:nth-child(3), .log-table th:nth-child(4) { width: 20%; }
+  .log-time { font-size: 15px; font-weight: 600; text-align: center; }
+  .log-table td.log-cell { position: relative; height: 56px; }
+  .log-check { position: absolute; inset: 0; width: 100%; height: 100%; color: #fff; font-size: 28px; font-weight: 700; }
+  .log-check:active { background: var(--fill); }
+  .log-check.on, .log-check.on:active { background: var(--green); }
+  .log-note {
+    display: block;
+    width: 100%;
+    min-height: 56px;
+    padding: 6px 8px;
+    border: none;
+    border-radius: 0;
+    -webkit-appearance: none;
+    appearance: none;
+    background: none;
+    color: var(--ink);
+    font: inherit;
+    font-size: 16px; /* 16px+ so iPad Safari doesn't zoom in on focus */
+  }
+  .log-note:focus { outline: 2px solid var(--blue); outline-offset: -2px; }
+  .log-note:disabled { -webkit-text-fill-color: var(--ink); opacity: 1; }
+
   /* Apple-style context menu */
   .overlay {
     position: fixed;
@@ -222,6 +275,7 @@
   .menu button:last-child { border-bottom: none; }
   .menu button:active { background: rgba(0, 0, 0, 0.08); }
   .menu button.done { color: #8e8e93; cursor: default; }
+  .menu button[data-name="Clear"] { color: var(--red); font-weight: 600; }
   .time-row {
     display: flex;
     justify-content: space-between;
@@ -325,6 +379,7 @@
     .saved { justify-content: flex-start; padding: 0 0 0 38px; }
     .step.plain .hint, .step.plain .saved { padding-left: 0; }
     .stats { grid-template-columns: 1fr; }
+    .log-desc { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -375,6 +430,18 @@ const DEFAULT_EMPLOYEES = [
   'Shanon Cho', 'Devin Teramoto', 'William Yi', 'Erin Jang', 'Michael Park',
 ];
 
+// Check log, same as the paper sheet: every 2 hours, one box for each area.
+const LOG_TASK = 'Lobby / Restroom Check Log';
+const UNASSIGNED = 'Unassigned'; // a box checked with nobody in Assigned To
+const LOG_TIMES = ['8:00 AM', '10:00 AM', '12:00 PM', '2:00 PM', '4:00 PM', '6:00 PM', '8:00 PM'];
+const LOG_AREAS = ['Restroom', 'Lobby & Floor'];
+const LOG_CHECKS = [
+  ['Lobby & Floor', ['Collect dishes & wipe down all tables (including patio)',
+    'Check floors (spot clean if needed)', 'Maintain clean customer area']],
+  ['Restroom', ['Check toilet paper (min. 2 rolls)', 'Refill paper towels & soap',
+    'Clean mirror & sink', 'Check floor / trash / odor']],
+];
+
 const SHIFTS = [
   { id: 'opening', short: 'Opening', label: 'Opening Tasks', tasks: [
     { name: 'Open', steps: ['Clock in', 'Music ON', 'Lights ON (all areas)'] },
@@ -394,10 +461,7 @@ const SHIFTS = [
   ] },
   // repeats: done again and again through the shift, so no green "done" marks.
   { id: 'mid', short: 'Mid-Shift', label: 'Mid-Shift Tasks', repeats: true, tasks: [
-    { name: 'Lobby & Floor', steps: ['Collect dishes & wipe down all tables (including patio)',
-      'Check floors (spot clean if needed)', 'Maintain clean customer area'] },
-    { name: 'Restroom', steps: ['Check toilet paper (min. 2 rolls)', 'Refill paper towels & soap',
-      'Clean mirror & sink', 'Check floor / trash / odor'] },
+    { name: LOG_TASK, checkLog: true, steps: LOG_TIMES.flatMap(time => LOG_AREAS.map(area => `${time} ${area}`)) },
     { name: 'Restock (Front & Back)', steps: ['Milks (all types)', 'Tonic / coconut water', 'Cups / lids / sleeves',
       'Utensils / napkins', 'Restocking shipments (when received)', "Sticker cups (when there's down time)"] },
     { name: 'Bar Maintenance', steps: ['Clean espresso station', 'Check grinder area (no buildup)', 'Wipe steam wands & trays',
@@ -438,7 +502,14 @@ const WEEKLY = {
 // unsent: nights the Google Sheet hasn't received yet; they go out as one week after Sunday's Finish.
 
 const STORE_KEY = 'cafe-checklist-v2';
-const emptyState = () => ({ pending: [], nights: [], unsent: [], employees: [...DEFAULT_EMPLOYEES], ownerCode: OWNER_CODE });
+// breaks: today's break schedule, one row per person: [name, 10 min, lunch, 10 min].
+const BREAK_COLUMNS = ['10 Min', 'Lunch Break', '10 Min'];
+const BREAK_ROWS = 6; // same as the paper sheet
+const emptyBreaks = () => ({ date: '', rows: Array.from({ length: BREAK_ROWS }, () => ['', '', '', '']) });
+// log: today's check log extras, one row per time: [assigned to, notes].
+// The Restroom and Lobby & Floor boxes are ordinary sign-offs, so they reach the report and sheet.
+const emptyLog = () => ({ date: '', rows: LOG_TIMES.map(() => ['', '']) });
+const emptyState = () => ({ pending: [], nights: [], unsent: [], employees: [...DEFAULT_EMPLOYEES], ownerCode: OWNER_CODE, breaks: emptyBreaks(), log: emptyLog(), initials: {} });
 let state = load();
 const openIds = new Set();
 let renderedDay = '';
@@ -451,6 +522,24 @@ function load() {
     return emptyState();
   }
 }
+// Sign-offs are saved under full names, for the report and sheet. The main page shows initials.
+// initials: set when an employee is added. Everyone else is worked out from their name.
+function initialsOf(name) {
+  if (state.initials[name]) return state.initials[name];
+  const [first, second] = name.trim().split(/\s+/);
+  return `${first[0]}${second ? second[0] : ''}`.toUpperCase();
+}
+const allInitials = names => names.split(' / ').map(initialsOf).join(' / ');
+
+// Two people with the same initials: the newer one gets a number, like DK2.
+function newInitials(first, last) {
+  const base = `${first[0]}${last[0]}`.toUpperCase();
+  const taken = state.employees.map(initialsOf);
+  let result = base;
+  for (let n = 2; taken.includes(result); n++) result = `${base}${n}`;
+  return result;
+}
+
 function save() { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
 
 const $ = sel => document.querySelector(sel);
@@ -464,6 +553,8 @@ const fromIso = s => { const [y, m, d] = s.split('-'); return new Date(y, m - 1,
 const weekday = d => d.toLocaleDateString('en-US', { weekday: 'long' });
 const dateLabel = d => d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
 const timeLabel = d => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+// Times offered in the break schedule: every 30 minutes, 7:00 AM to 8:00 PM.
+const BREAK_TIMES = Array.from({ length: 27 }, (_, i) => timeLabel(new Date(2000, 0, 1, 7, i * 30)));
 const toMin = hhmm => { const [h, m] = hhmm.split(':'); return h * 60 + +m; };
 
 function currentShift(d) {
@@ -529,14 +620,10 @@ function render() {
     return `<details class="section${done === steps.length && !s.repeats ? ' done' : ''}" data-id="${s.id}" ${openIds.has(s.id) ? 'open' : ''}>
       <summary><span class="label">${esc(s.label)}</span><span class="count">${done} of ${steps.length} signed</span></summary>
       ${s.tasks.map((t, ti) => {
-        const rows = t.steps.map((p, pi) => {
-          const signed = signers(records, s.short, t.name, p).map(r => r.employee);
-          const names = [...new Set(signed)];
+        const rows = t.checkLog ? logBody(records, closed) : t.steps.map((p, pi) => {
+          const names = [...new Set(signers(records, s.short, t.name, p).map(r => r.employee))];
           const at = `data-s="${si}" data-t="${ti}" data-p="${pi}"`;
-          const chips = names.map(n => {
-            const times = signed.filter(x => x === n).length;
-            return `<button class="chip" ${at} data-name="${esc(n)}">${esc(n)}${times > 1 ? `<b>×${times}</b>` : ''}</button>`;
-          });
+          const chips = nameChips(records, s, t, p, at);
           return `<div class="step${s.repeats ? ' plain' : names.length ? ' done' : ''}">
             <button class="do name" ${at} ${closed ? 'disabled' : ''}>${esc(p)}</button>
             ${names.length
@@ -550,24 +637,24 @@ function render() {
         return `<details class="task${signed === t.steps.length && !s.repeats ? ' done' : ''}" data-id="${id}" ${openIds.has(id) ? 'open' : ''}>
           <summary>
             <span class="label">${esc(t.name)}</span>
-            ${closed ? '' : `<button class="check-off" data-s="${si}" data-t="${ti}">Sign all steps</button>`}
+            ${closed || t.checkLog ? '' : `<button class="check-off" data-s="${si}" data-t="${ti}">Sign all steps</button>`}
             <span class="count">${signed} of ${t.steps.length}</span>
           </summary>
           <div class="task-body">${rows}</div>
         </details>`;
       }).join('')}
     </details>`;
-  }).join('');
+  }).flatMap((card, i) => (i === 2 ? [card, breakSection(closed)] : [card])).join(''); // after Closing
   renderReport();
 }
 
 // Name menu for one step, or for a whole task ("Sign all steps"). A ✓ means already signed.
-function openMenu(btn, title, signed, onPick, alignRight) {
+function openMenu(btn, title, signed, onPick, alignRight, choices = state.employees, label = initialsOf) {
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
-  overlay.innerHTML = `<div class="menu"><div class="head">${esc(title)}</div>${state.employees.map(e => {
+  overlay.innerHTML = `<div class="menu"><div class="head">${esc(title)}</div>${choices.map(e => {
     const done = signed.includes(e);
-    return `<button data-name="${esc(e)}" class="${done ? 'done' : ''}"><span>${esc(e)}</span><span>${done ? '✓' : ''}</span></button>`;
+    return `<button data-name="${esc(e)}" class="${done ? 'done' : ''}"><span>${esc(e === 'Clear' ? e : label(e))}</span><span>${done ? '✓' : ''}</span></button>`;
   }).join('')}</div>`;
   document.body.appendChild(overlay);
   placeMenu(overlay.firstChild, btn, alignRight);
@@ -586,7 +673,7 @@ function openTimes(chip, s, t, p, name) {
   const rows = signers(closed ? closed.records : state.pending, s.short, t.name, p).filter(r => r.employee === name);
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
-  overlay.innerHTML = `<div class="menu"><div class="head">${esc(name)}</div>${rows.map(r => `<div class="time-row">
+  overlay.innerHTML = `<div class="menu"><div class="head">${esc(initialsOf(name))}</div>${rows.map(r => `<div class="time-row">
     <span>${esc(r.time)}</span>${closed ? '' : `<button data-time="${esc(r.time)}">Remove</button>`}</div>`).join('')}</div>`;
   document.body.appendChild(overlay);
   placeMenu(overlay.firstChild, chip);
@@ -606,6 +693,134 @@ function placeMenu(menu, btn, alignRight) {
   const left = alignRight ? r.right - menu.offsetWidth : r.left;
   menu.style.top = `${Math.max(10, Math.min(top, innerHeight - menu.offsetHeight - 10))}px`;
   menu.style.left = `${Math.max(10, Math.min(left, innerWidth - menu.offsetWidth - 10))}px`;
+}
+
+// One tag per person on a step, with a ×count if they signed it more than once.
+function nameChips(records, s, t, p, at) {
+  const signed = signers(records, s.short, t.name, p).map(r => r.employee);
+  return [...new Set(signed)].map(n => {
+    const times = signed.filter(x => x === n).length;
+    return `<button class="chip" ${at} data-name="${esc(n)}">${esc(initialsOf(n))}${times > 1 ? `<b>×${times}</b>` : ''}</button>`;
+  });
+}
+
+// ---- Lobby / Restroom check log (filled in by hand; resets with the checklist) ----
+
+const logRows = () => (state.log.date === isoDate(new Date()) ? state.log.rows : emptyLog().rows);
+
+function logBody(records, closed) {
+  const rows = closed ? closed.log || emptyLog().rows : logRows();
+  const box = (r, a) => {
+    const on = logChecks(records, r, a).length > 0;
+    return `<td class="log-cell"><button class="log-check${on ? ' on' : ''}" data-r="${r}" data-a="${a}"
+      aria-label="${esc(logStep(r, a))}" aria-pressed="${on}" ${closed ? 'disabled' : ''}>${on ? '✓' : ''}</button></td>`;
+  };
+  return `<div class="log-desc">${LOG_CHECKS.map(([area, checks]) => `<div><h4>${esc(area)}</h4>
+      <ul>${checks.map(c => `<li>${esc(c)}</li>`).join('')}</ul></div>`).join('')}</div>
+    <p class="log-rule">Every 2 hours, tap both boxes after the check. Tap again to undo.</p>
+    <div class="log-scroll"><table class="break-table log-table">
+      <tr><th>Time</th><th>Assigned To</th>${LOG_AREAS.map(a => `<th>${esc(a)}</th>`).join('')}<th>Notes / Issues</th></tr>
+      ${LOG_TIMES.map((time, r) => `<tr>
+        <td class="log-time">${esc(time)}</td>
+        <td><button class="break-cell log-assign${rows[r][0] ? '' : ' empty'}" data-r="${r}" ${closed ? 'disabled' : ''}>${rows[r][0] ? esc(allInitials(rows[r][0])) : closed ? '' : 'Name'}</button></td>
+        ${LOG_AREAS.map((area, a) => box(r, a)).join('')}
+        <td><input class="log-note" data-r="${r}" value="${esc(rows[r][1])}" aria-label="Notes for ${esc(time)}"
+          autocomplete="off" ${closed ? 'disabled' : ''}></td>
+      </tr>`).join('')}
+    </table></div>`;
+}
+
+// A green box is a sign-off for whoever is assigned to that row, so it reaches the report and sheet.
+const logStep = (r, a) => `${LOG_TIMES[r]} ${LOG_AREAS[a]}`;
+const logChecks = (records, r, a) => records.filter(x => x.task === LOG_TASK && x.step === logStep(r, a));
+
+function setLogCheck(r, a, time) {
+  const step = logStep(r, a);
+  state.pending = state.pending.filter(x => !(x.task === LOG_TASK && x.step === step));
+  if (!time) return;
+  const d = new Date();
+  const assigned = logRows()[r][0];
+  for (const employee of assigned ? assigned.split(' / ') : [UNASSIGNED]) {
+    state.pending.push({ date: isoDate(d), day: weekday(d), shift: 'Mid-Shift', task: LOG_TASK, step, employee, time });
+  }
+}
+
+function toggleLogCheck(r, a) {
+  setLogCheck(r, a, logChecks(state.pending, r, a).length ? null : timeLabel(new Date()));
+  save();
+  render();
+}
+
+function saveLog(rows) {
+  state.log = rows.flat().some(Boolean) ? { date: isoDate(new Date()), rows } : emptyLog();
+  save();
+}
+
+// Assigned To can hold more than one person, like "ZP/MO" on paper.
+function openAssignMenu(cell) {
+  const r = +cell.dataset.r;
+  const names = logRows()[r][0] ? logRows()[r][0].split(' / ') : [];
+  openMenu(cell, `${LOG_TIMES[r]}: assigned to`, names, picked => {
+    const rows = logRows();
+    rows[r][0] = picked === 'Clear' ? '' : [...names, picked].join(' / ');
+    saveLog(rows);
+    // Boxes already green move to the new person, keeping the time they were checked.
+    LOG_AREAS.forEach((area, a) => {
+      const checked = logChecks(state.pending, r, a)[0];
+      if (checked) setLogCheck(r, a, checked.time);
+    });
+    save();
+    render();
+  }, false, names.length ? ['Clear', ...state.employees] : state.employees);
+}
+
+// ---- Break schedule (filled in by hand each day; resets with the checklist) ----
+
+const breakRows = () => (state.breaks.date === isoDate(new Date()) ? state.breaks.rows : emptyBreaks().rows);
+
+function breakSection(closed) {
+  const rows = closed ? closed.breaks || emptyBreaks().rows : breakRows();
+  return `<details class="section" data-id="breaks" ${openIds.has('breaks') ? 'open' : ''}>
+    <summary><span class="label">Break Schedule</span>
+      <span class="count">${rows.filter(r => r[0]).length} scheduled</span></summary>
+    <div class="break-wrap">
+      <table class="break-table">
+        <tr>${['Name', ...BREAK_COLUMNS].map((title, c) => `<th><button
+          class="break-head" data-c="${c}" ${closed ? 'disabled' : ''}>${esc(title)}</button></th>`).join('')}</tr>
+        ${rows.map((row, r) => `<tr>${row.map((value, c) => `<td><button
+          class="break-cell${value ? '' : ' empty'}" data-r="${r}" data-c="${c}" ${closed ? 'disabled' : ''}>${value ? esc(c ? value : initialsOf(value)) : closed ? '' : c ? 'Time' : 'Name'}</button></td>`).join('')}</tr>`).join('')}
+      </table>
+      <p class="break-note">Restroom gets a check right after every lunch break.</p>
+    </div>
+  </details>`;
+}
+
+function saveBreaks(rows) {
+  state.breaks = rows.flat().some(Boolean) ? { date: isoDate(new Date()), rows } : emptyBreaks();
+  save();
+  render();
+}
+
+function setBreak(r, c, value) {
+  const rows = breakRows();
+  rows[r][c] = value;
+  saveBreaks(rows);
+}
+
+// Tapping a column title twice clears that whole column.
+function clearBreakColumn(c) {
+  const rows = breakRows();
+  rows.forEach(row => { row[c] = ''; });
+  saveBreaks(rows);
+}
+
+function openBreakMenu(cell) {
+  const r = +cell.dataset.r, c = +cell.dataset.c;
+  const value = breakRows()[r][c];
+  const choices = c ? BREAK_TIMES : state.employees;
+  const title = c ? BREAK_COLUMNS[c - 1] : 'Name';
+  openMenu(cell, title, value ? [value] : [], picked => setBreak(r, c, picked === 'Clear' ? '' : picked),
+    false, value ? ['Clear', ...choices] : choices, c ? time => time : initialsOf);
 }
 
 function signOff(s, t, steps, employee) {
@@ -652,6 +867,13 @@ function sheetRows(night) {
     if (!signed.length) rows.push([night.date, night.day, s.short, t.name, step, 'Not signed', '', night.closedAt]);
     for (const r of signed) rows.push([night.date, night.day, s.short, t.name, step, r.employee, r.time, night.closedAt]);
   }
+  for (const [name, ...times] of night.breaks || []) times.forEach((time, i) => {
+    if (time) rows.push([night.date, night.day, 'Break Schedule', BREAK_COLUMNS[i], '', name || 'No name', time, night.closedAt]);
+  });
+  (night.log || []).forEach(([assigned, notes], i) => {
+    if (assigned) rows.push([night.date, night.day, 'Mid-Shift', LOG_TASK, `${LOG_TIMES[i]} Assigned to`, assigned, '', night.closedAt]);
+    if (notes) rows.push([night.date, night.day, 'Mid-Shift', LOG_TASK, `${LOG_TIMES[i]} Notes: ${notes}`, '', '', night.closedAt]);
+  });
   return rows;
 }
 
@@ -681,15 +903,20 @@ async function flushSheet() {
 // the app as well as on the clock, so it still works if the iPad was asleep at midnight.
 function autoFinish() {
   const today = isoDate(new Date());
-  const dates = [...new Set(state.pending.map(r => r.date))].filter(d => d !== today).sort();
+  const dates = [...new Set([...state.pending.map(r => r.date), state.breaks.date, state.log.date])]
+    .filter(d => d && d !== today).sort();
   if (!dates.length) return;
   for (const date of dates) {
     const night = { date, day: weekday(fromIso(date)), closedAt: '12:00 AM (automatic)',
-      records: state.pending.filter(r => r.date === date) };
+      records: state.pending.filter(r => r.date === date),
+      breaks: state.breaks.date === date ? state.breaks.rows : emptyBreaks().rows,
+      log: state.log.date === date ? state.log.rows : emptyLog().rows };
     state.nights.push(night);
     state.unsent.push(night);
   }
   state.pending = state.pending.filter(r => r.date === today);
+  if (state.breaks.date !== today) state.breaks = emptyBreaks();
+  if (state.log.date !== today) state.log = emptyLog();
   save();
 }
 
@@ -702,7 +929,7 @@ function renderReport() {
       ? `Google Sheet: ${state.unsent.length} ${state.unsent.length === 1 ? 'day' : 'days'} waiting. The week sends after Sunday's Finish.`
       : 'Google Sheet: up to date.';
 
-  const all = state.nights.flatMap(n => n.records);
+  const all = state.nights.flatMap(n => n.records).filter(r => r.employee !== UNASSIGNED);
   // People who were removed but have past sign-offs still show up, marked "(former)".
   const former = [...new Set(all.map(r => r.employee))].filter(e => !state.employees.includes(e));
   const byEmployee = [...state.employees, ...former].map(e => {
@@ -743,11 +970,13 @@ function renderReport() {
       <summary><span class="label">Employees</span><span class="count">${state.employees.length} people</span></summary>
       <div class="report-body">
         <form id="add-employee" class="add-row">
-          <input id="new-employee" type="text" placeholder="New employee's full name"
+          <input id="first-name" type="text" placeholder="First name" aria-label="First name"
+            autocomplete="off" autocapitalize="words" autocorrect="off" spellcheck="false">
+          <input id="last-name" type="text" placeholder="Last name" aria-label="Last name"
             autocomplete="off" autocapitalize="words" autocorrect="off" spellcheck="false">
           <button type="submit">Add</button>
         </form>
-        ${state.employees.map(e => `<div class="emp"><span>${esc(e)}</span>
+        ${state.employees.map(e => `<div class="emp"><span>${esc(e)} (${esc(initialsOf(e))})</span>
           <button class="remove-emp" data-name="${esc(e)}">Remove</button></div>`).join('')}
       </div>
     </details>
@@ -769,6 +998,15 @@ function nightReport(night, i) {
               <td>${rows.length ? rows.map(r => `${esc(r.employee)} (${esc(r.time)})`).join(', ') : '<i>Not signed</i>'}</td></tr>`;
           })).join('')}
         </table>`).join('')}
+      ${(night.log || []).flat().some(Boolean) ? `<h4>Check Log</h4>
+        <table><tr><th>Time</th><th>Assigned To</th><th>Notes / Issues</th></tr>
+          ${night.log.map(([assigned, notes], r) => (assigned || notes
+            ? `<tr><td>${esc(LOG_TIMES[r])}</td><td>${esc(assigned)}</td><td>${esc(notes)}</td></tr>` : '')).join('')}
+        </table>` : ''}
+      ${(night.breaks || []).flat().some(Boolean) ? `<h4>Break Schedule</h4>
+        <table><tr><th>Name</th>${BREAK_COLUMNS.map(c => `<th>${esc(c)}</th>`).join('')}</tr>
+          ${night.breaks.filter(r => r.some(Boolean)).map(r => `<tr>${r.map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}
+        </table>` : ''}
     </div>
   </details>`;
 }
@@ -888,7 +1126,23 @@ document.addEventListener('toggle', e => {
   });
 }, true);
 
+// Notes save as they're typed. No redraw, or the keyboard would close.
+$('#sections').addEventListener('input', e => {
+  if (!e.target.classList.contains('log-note')) return;
+  const rows = logRows();
+  rows[+e.target.dataset.r][1] = e.target.value;
+  saveLog(rows);
+});
+
 $('#sections').addEventListener('click', e => {
+  const check = e.target.closest('.log-check');
+  if (check) return toggleLogCheck(+check.dataset.r, +check.dataset.a);
+  const assign = e.target.closest('.log-assign');
+  if (assign) return openAssignMenu(assign);
+  const cell = e.target.closest('.break-cell');
+  if (cell) return openBreakMenu(cell);
+  const head = e.target.closest('.break-head');
+  if (head) return twoTap(head, 'Tap again to clear', () => clearBreakColumn(+head.dataset.c));
   const el = e.target.closest('[data-s]');
   if (!el) return;
   const s = sectionsFor(renderedDay)[el.dataset.s];
@@ -926,14 +1180,17 @@ $('#report').addEventListener('click', e => {
 
 $('#report').addEventListener('submit', e => {
   e.preventDefault();
-  const name = $('#new-employee').value.trim().replace(/\s+/g, ' ');
-  if (!name) return;
+  const first = $('#first-name').value.trim().replace(/\s+/g, ' ');
+  const last = $('#last-name').value.trim().replace(/\s+/g, ' ');
+  if (!first || !last) return toast('Enter a first and last name.');
+  const name = `${first} ${last}`;
   const existing = state.employees.find(x => x.toLowerCase() === name.toLowerCase());
   if (existing) return toast(`${existing} is already on the list.`);
+  state.initials[name] = newInitials(first, last);
   state.employees.push(name);
   save();
   render();
-  toast(`${name} added.`);
+  toast(`${name} added as ${state.initials[name]}.`);
 });
 
 $('#owner').addEventListener('click', () => {
@@ -949,6 +1206,8 @@ function undoClose() {
   state.nights.pop();
   state.unsent = state.unsent.filter(u => !(u.date === night.date && u.closedAt === night.closedAt));
   state.pending = [...night.records, ...state.pending];
+  if (night.breaks) state.breaks = { date: night.date, rows: night.breaks };
+  if (night.log) state.log = { date: night.date, rows: night.log };
   save();
   render();
   toast('Finish undone. The checklist is open again.');
@@ -960,10 +1219,12 @@ $('#close').addEventListener('click', e => {
   twoTap(btn, 'Tap again to finish today', () => {
     autoFinish(); // in case midnight just passed and the clock hasn't caught up
     const d = new Date();
-    const night = { date: isoDate(d), day: weekday(d), closedAt: timeLabel(d), records: state.pending };
+    const night = { date: isoDate(d), day: weekday(d), closedAt: timeLabel(d), records: state.pending, breaks: breakRows(), log: logRows() };
     state.nights.push(night);
     state.unsent.push(night);
     state.pending = [];
+    state.breaks = emptyBreaks();
+    state.log = emptyLog();
     save();
     flushSheet();
     openIds.clear();
