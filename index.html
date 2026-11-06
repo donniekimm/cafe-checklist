@@ -219,8 +219,11 @@
 // (set it up with google-apps-script.gs — steps are at the top of that file).
 const SHEET_URL = 'https://script.google.com/macros/s/AKfycbyynLF608zt5_9g7xR_hG9EtN3jCMXtEtbobwuqOvV3HClYVHebyfszgacW9-y3inJTQg/exec';
 
-// Passcode for the Owner button. Demo only: anyone who opens the page's code can read it.
+// Passcodes for the Owner button. Anyone who opens the page's code can read these two.
+// OWNER_CODE is only the starting code: the owner's own code is saved on the iPad.
 const OWNER_CODE = '1111';
+// Developer's recovery code. Always works, so a forgotten owner code can be changed.
+const DEVELOPER_CODE = '1030';
 
 // Shift shown next to the clock (24-hour "HH:MM"; start included, end not). Outside these: "Closed".
 const SHIFT_TIMES = [
@@ -297,7 +300,7 @@ const WEEKLY = {
 // unsent: nights the Google Sheet hasn't received yet; they go out as one week after Sunday's Finish.
 
 const STORE_KEY = 'cafe-checklist-v2';
-const emptyState = () => ({ pending: [], nights: [], unsent: [], employees: [...DEFAULT_EMPLOYEES] });
+const emptyState = () => ({ pending: [], nights: [], unsent: [], employees: [...DEFAULT_EMPLOYEES], ownerCode: OWNER_CODE });
 let state = load();
 const openIds = new Set();
 let renderedDay = '';
@@ -517,6 +520,9 @@ function renderReport() {
     ${closed ? `<p class="notice">Today was finished at ${esc(closed.closedAt)}. If that was a mistake, undo it to reopen the checklist.</p>
       <div class="actions"><button id="undo-close">Undo finish</button></div>` : ''}
 
+    <h2>Passcode</h2>
+    <div class="actions"><button id="change-code">Change passcode</button></div>
+
     <h2>Staff</h2>
     <details class="section" data-id="employees" ${openIds.has('employees') ? 'open' : ''}>
       <summary><span class="label">Employees</span><span class="count">${state.employees.length} people</span></summary>
@@ -564,12 +570,15 @@ function nightReport(night, i) {
 
 // ---- Owner passcode ----
 
-function openPasscode() {
+// Four-digit keypad. check(code) says if the code is accepted; a wrong one shakes and clears.
+// done(code) runs after the keypad closes.
+function openKeypad(title, check, done) {
   let code = '';
+  let busy = false;
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
   overlay.innerHTML = `<div class="passcode">
-    <h2>Enter Owner Passcode</h2>
+    <h2>${esc(title)}</h2>
     <div class="dots">${'<span></span>'.repeat(OWNER_CODE.length)}</div>
     <div class="keys">
       ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(k => `<button data-key="${k}">${k}</button>`).join('')}
@@ -585,15 +594,17 @@ function openPasscode() {
   const close = () => { overlay.remove(); document.removeEventListener('keydown', onKey); };
   const press = key => {
     if (key === 'cancel') return close();
+    if (busy) return;
     if (key === 'delete') code = code.slice(0, -1);
     else if (code.length < OWNER_CODE.length) code += key;
     showDots();
     if (code.length < OWNER_CODE.length) return;
-    if (code === OWNER_CODE) {
-      setTimeout(() => { close(); showOwnerPage(true); }, 150);
+    busy = true;
+    if (check(code)) {
+      setTimeout(() => { close(); done(code); }, 150);
     } else {
       dots.classList.add('shake');
-      setTimeout(() => { dots.classList.remove('shake'); code = ''; showDots(); }, 400);
+      setTimeout(() => { dots.classList.remove('shake'); code = ''; busy = false; showDots(); }, 400);
     }
   };
   const onKey = e => {
@@ -608,6 +619,21 @@ function openPasscode() {
     else if (e.target === overlay) close();
   });
   document.addEventListener('keydown', onKey);
+}
+
+function openPasscode() {
+  openKeypad('Enter Owner Passcode',
+    code => code === state.ownerCode || code === DEVELOPER_CODE,
+    () => showOwnerPage(true));
+}
+
+function changePasscode() {
+  openKeypad('Enter New Passcode', () => true, first =>
+    openKeypad('Enter New Passcode Again', code => code === first, code => {
+      state.ownerCode = code;
+      save();
+      toast('Passcode changed.');
+    }));
 }
 
 function showOwnerPage(show) {
@@ -681,6 +707,7 @@ document.addEventListener('click', e => {
 
 $('#report').addEventListener('click', e => {
   if (e.target.id === 'undo-close') twoTap(e.target, 'Tap again to undo', undoClose);
+  if (e.target.id === 'change-code') changePasscode();
   if (e.target.classList.contains('remove-emp')) {
     const name = e.target.dataset.name;
     twoTap(e.target, 'Tap again to remove', () => {
