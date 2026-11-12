@@ -75,6 +75,52 @@
   #close:active { background: var(--blue-dark); }
   #close:disabled { background: var(--fill); color: var(--muted); }
 
+  /* Editing mode: the owner changes task wording on the main page */
+  #done { display: none; height: 48px; padding: 0 28px; border-radius: 6px; background: var(--blue); color: #fff; font-weight: 600; }
+  #done:active { background: var(--blue-dark); }
+  /* Edit and Delete modes share the same layout: Undo top-left, Done top-right */
+  #undo { display: none; height: 48px; padding: 0 20px; border-radius: 6px; background: var(--fill); font-weight: 600; }
+  #undo:active { background: var(--line); }
+  #undo:disabled { color: #a0a0a0; }
+  body.changing #undo, body.changing #done { display: block; }
+  body.changing #close, body.changing #owner { display: none; }
+  body.changing #day { color: var(--blue); font-size: 18px; font-weight: 700; }
+  #mode-banner { display: none; margin-bottom: 20px; }
+  body.changing #mode-banner { display: block; }
+  body.changing .step { grid-template-columns: minmax(0, 1fr); padding: 8px 0; }
+  body.changing .log-scroll, body.changing .break-wrap { opacity: 0.5; pointer-events: none; }
+  .del-row { display: flex; align-items: center; gap: 12px; }
+  .edit-text.fixed { display: flex; align-items: center; }
+  .del-x {
+    flex: none;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: #fde7e9;
+    color: var(--red);
+    font-size: 26px;
+    font-weight: 500;
+    line-height: 44px;
+  }
+  .del-x:active { background: #f9c9ce; }
+  .edit-text {
+    flex: 1;
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    padding: 6px 12px;
+    border: 1px solid #b5b5b5;
+    border-radius: 6px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: #fff;
+    color: var(--ink);
+    font: inherit;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  .edit-text:focus { border-color: var(--blue); outline: 2px solid var(--blue); outline-offset: -1px; }
+
   header { margin-bottom: 20px; }
   header h1 { margin: 0 0 6px; font-size: 30px; font-weight: 700; }
   header p { margin: 0; color: var(--muted); }
@@ -137,6 +183,7 @@
 
   .task { border-top: 1px solid var(--line); }
   .task-body { padding: 0 20px 8px; }
+  .empty-task { margin: 0; padding: 12px 0; color: var(--muted); }
   .check-off {
     flex: none;
     min-height: 44px;
@@ -356,6 +403,24 @@
   .emp { display: flex; justify-content: space-between; align-items: center; min-height: 60px; }
   .emp + .emp, .add-row + .emp { border-top: 1px solid var(--line); }
 
+  /* Owner: add tasks */
+  .task-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0 8px; }
+  .task-form label { display: grid; gap: 6px; color: var(--muted); font-size: 15px; font-weight: 600; }
+  .task-form .wide { grid-column: 1 / -1; }
+  .task-form input, .task-form select {
+    height: 48px;
+    padding: 0 14px;
+    border: 1px solid #b5b5b5;
+    border-radius: 6px;
+    background: #fff;
+    color: var(--ink);
+    font: inherit;
+    font-size: 17px; /* 16px+ so iPad Safari doesn't zoom in on focus */
+  }
+  .task-form input { -webkit-appearance: none; appearance: none; }
+  .task-form button { min-height: 48px; border-radius: 6px; background: var(--blue); color: #fff; font-weight: 600; }
+  .actions button.on { background: var(--blue); color: #fff; }
+
   #toast {
     position: fixed;
     left: 50%;
@@ -380,16 +445,20 @@
     .step.plain .hint, .step.plain .saved { padding-left: 0; }
     .stats { grid-template-columns: 1fr; }
     .log-desc { grid-template-columns: 1fr; }
+    .task-form { grid-template-columns: 1fr; }
   }
 </style>
 </head>
 <body>
 <div id="topbar">
+  <button id="undo">Undo</button>
   <button id="owner">Owner</button>
   <div id="day"></div>
   <button id="close">Finish Day</button>
+  <button id="done">Done</button>
 </div>
 <main id="checklist">
+  <p id="mode-banner" class="notice"></p>
   <header>
     <h1>Shift Checklist</h1>
     <p id="progress"></p>
@@ -509,10 +578,9 @@ const emptyBreaks = () => ({ date: '', rows: Array.from({ length: BREAK_ROWS }, 
 // log: today's check log extras, one row per time: [assigned to, notes].
 // The Restroom and Lobby & Floor boxes are ordinary sign-offs, so they reach the report and sheet.
 const emptyLog = () => ({ date: '', rows: LOG_TIMES.map(() => ['', '']) });
-const emptyState = () => ({ pending: [], nights: [], unsent: [], employees: [...DEFAULT_EMPLOYEES], ownerCode: OWNER_CODE, breaks: emptyBreaks(), log: emptyLog(), initials: {} });
+const emptyState = () => ({ pending: [], nights: [], unsent: [], employees: [...DEFAULT_EMPLOYEES], ownerCode: OWNER_CODE, breaks: emptyBreaks(), log: emptyLog(), initials: {}, taskChanges: [] });
 let state = load();
 const openIds = new Set();
-let renderedDay = '';
 let renderedDate = '';
 
 function load() {
@@ -565,25 +633,58 @@ function currentShift(d) {
 
 function renderClock() {
   const d = new Date();
+  if (mode) return void ($('#day').textContent = mode === 'edit' ? 'Editing Mode' : 'Delete Mode');
   $('#day').textContent = `${dateLabel(d)} · ${timeLabel(d)} · ${currentShift(d)}`;
 }
 
 // ---- Tasks ----
 
-function sectionsFor(day) {
-  const weekly = WEEKLY[day];
-  if (!weekly) return SHIFTS;
-  return [...SHIFTS, { id: 'weekly', short: 'Weekly', label: `Weekly Tasks — ${day}`,
-    tasks: [{ name: day, steps: weekly, hideTitle: true }] }];
+const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+// The owner's changes to the task list, oldest first, each saved with its date:
+//   { kind: 'addSub', shift, name }            new subcategory
+//   { kind: 'addTask', shift, task, step }     new step
+//   { kind: 'renameSub', shift, from, to }     subcategory wording changed
+//   { kind: 'renameTask', shift, task, from, to }  step wording changed
+//   { kind: 'removeTask', shift, task, step }  step deleted
+//   { kind: 'removeSub', shift, name }         subcategory deleted, with its steps
+// A day only uses the changes made up to that day, so past days in the report keep their wording.
+// New steps take on their shift's rules: Mid-Shift repeats with no green marks, the rest are once a day.
+function taskTree(date) {
+  const shifts = SHIFTS.map(s => ({ ...s, tasks: s.tasks.map(t => ({ ...t, steps: [...t.steps] })) }));
+  const weekly = Object.fromEntries(DAYS.map(d => [d, [...(WEEKLY[d] || [])]]));
+  const tasksOf = id => shifts.find(s => s.id === id)?.tasks;
+  const stepsOf = (id, task) => (id === 'weekly' ? weekly[task] : tasksOf(id)?.find(t => t.name === task)?.steps);
+  for (const c of state.taskChanges) {
+    if (c.on > date) continue;
+    const tasks = tasksOf(c.shift);
+    const steps = stepsOf(c.shift, c.task);
+    if (c.kind === 'addSub' && tasks && !tasks.some(t => t.name === c.name)) tasks.push({ name: c.name, steps: [] });
+    if (c.kind === 'addTask' && steps && !steps.includes(c.step)) steps.push(c.step);
+    if (c.kind === 'renameSub') { const t = tasks?.find(t => t.name === c.from); if (t) t.name = c.to; }
+    if (c.kind === 'renameTask' && steps) { const i = steps.indexOf(c.from); if (i >= 0) steps[i] = c.to; }
+    if (c.kind === 'removeTask' && steps) { const i = steps.indexOf(c.step); if (i >= 0) steps.splice(i, 1); }
+    if (c.kind === 'removeSub' && tasks) { const i = tasks.findIndex(t => t.name === c.name); if (i >= 0) tasks.splice(i, 1); }
+  }
+  return { shifts, weekly };
+}
+
+// What the checklist shows on a date. A new subcategory shows even before it has tasks.
+function sectionsFor(date) {
+  const { shifts, weekly } = taskTree(date);
+  const day = weekday(fromIso(date));
+  if (!weekly[day].length) return shifts;
+  return [...shifts, { id: 'weekly', short: 'Weekly', label: `Weekly Tasks — ${day}`,
+    tasks: [{ name: day, steps: weekly[day], hideTitle: true }] }];
 }
 
 function signers(records, shift, task, step) {
   return records.filter(r => r.shift === shift && r.task === task && r.step === step);
 }
 
-function progress(day, records) {
+function progress(date, records) {
   let total = 0, done = 0;
-  for (const s of sectionsFor(day)) for (const t of s.tasks) for (const p of t.steps) {
+  for (const s of sectionsFor(date)) for (const t of s.tasks) for (const p of t.steps) {
     total++;
     if (signers(records, s.short, t.name, p).length) done++;
   }
@@ -598,13 +699,17 @@ function closedToday() {
   return last && last.date === isoDate(new Date()) ? last : null;
 }
 
+// '' normally; 'edit' or 'delete' while the owner changes tasks on the main page.
+let mode = '';
+
 function render() {
-  renderedDay = weekday(new Date());
   renderedDate = isoDate(new Date());
+  const edit = mode === 'edit';
+  const del = mode === 'delete';
   renderClock();
   const closed = closedToday();
   const records = closed ? closed.records : state.pending;
-  const today = progress(renderedDay, records);
+  const today = progress(renderedDate, records);
   $('#progress').textContent = `${today.done} of ${today.total} steps signed today`;
   $('#bar').style.width = `${today.done / today.total * 100}%`;
 
@@ -614,16 +719,20 @@ function render() {
 
   $('#sections').innerHTML = (closed
     ? `<p class="notice">Today was finished at ${esc(closed.closedAt)}. The checklist opens again at 12:00 AM.</p>`
-    : '') + sectionsFor(renderedDay).map((s, si) => {
+    : '') + sectionsFor(renderedDate).map((s, si) => {
     const steps = s.tasks.flatMap(t => t.steps.map(p => signers(records, s.short, t.name, p).length));
     const done = steps.filter(Boolean).length;
     return `<details class="section${done === steps.length && !s.repeats ? ' done' : ''}" data-id="${s.id}" ${openIds.has(s.id) ? 'open' : ''}>
       <summary><span class="label">${esc(s.label)}</span><span class="count">${done} of ${steps.length} signed</span></summary>
       ${s.tasks.map((t, ti) => {
-        const rows = t.checkLog ? logBody(records, closed) : t.steps.map((p, pi) => {
+        const rows = t.checkLog ? logBody(records, closed) : !t.steps.length ? '<p class="empty-task">No tasks yet.</p>' : t.steps.map((p, pi) => {
           const names = [...new Set(signers(records, s.short, t.name, p).map(r => r.employee))];
           const at = `data-s="${si}" data-t="${ti}" data-p="${pi}"`;
           const chips = nameChips(records, s, t, p, at);
+          if (del) return `<div class="step"><div class="del-row"><span class="edit-text fixed">${esc(p)}</span>
+            <button class="del-x" ${at} aria-label="Delete ${esc(p)}">×</button></div></div>`;
+          if (edit) return `<div class="step"><input class="edit-text edit-step" ${at} value="${esc(p)}"
+            aria-label="Task wording" autocomplete="off" autocapitalize="sentences"></div>`;
           return `<div class="step${s.repeats ? ' plain' : names.length ? ' done' : ''}">
             <button class="do name" ${at} ${closed ? 'disabled' : ''}>${esc(p)}</button>
             ${names.length
@@ -634,11 +743,15 @@ function render() {
         if (t.hideTitle) return `<div class="task"><div class="task-body">${rows}</div></div>`;
         const id = `${s.id}-${ti}`;
         const signed = t.steps.filter(p => signers(records, s.short, t.name, p).length).length;
-        return `<details class="task${signed === t.steps.length && !s.repeats ? ' done' : ''}" data-id="${id}" ${openIds.has(id) ? 'open' : ''}>
+        return `<details class="task${t.steps.length && signed === t.steps.length && !s.repeats ? ' done' : ''}" data-id="${id}" ${openIds.has(id) ? 'open' : ''}>
           <summary>
-            <span class="label">${esc(t.name)}</span>
-            ${closed || t.checkLog ? '' : `<button class="check-off" data-s="${si}" data-t="${ti}">Sign all steps</button>`}
+            <span class="label">${edit && !t.checkLog
+              ? `<input class="edit-text edit-sub" data-s="${si}" data-t="${ti}" value="${esc(t.name)}"
+                aria-label="Subcategory wording" autocomplete="off" autocapitalize="words">`
+              : esc(t.name)}</span>
+            ${closed || mode || t.checkLog || !t.steps.length ? '' : `<button class="check-off" data-s="${si}" data-t="${ti}">Sign all steps</button>`}
             <span class="count">${signed} of ${t.steps.length}</span>
+            ${del && !t.checkLog ? `<button class="del-x" data-s="${si}" data-t="${ti}" aria-label="Delete ${esc(t.name)}">×</button>` : ''}
           </summary>
           <div class="task-body">${rows}</div>
         </details>`;
@@ -862,7 +975,7 @@ function weekIsDue(monday) {
 // One row per step, so the sheet shows unsigned steps too.
 function sheetRows(night) {
   const rows = [];
-  for (const s of sectionsFor(night.day)) for (const t of s.tasks) for (const step of t.steps) {
+  for (const s of sectionsFor(night.date)) for (const t of s.tasks) for (const step of t.steps) {
     const signed = signers(night.records, s.short, t.name, step);
     if (!signed.length) rows.push([night.date, night.day, s.short, t.name, step, 'Not signed', '', night.closedAt]);
     for (const r of signed) rows.push([night.date, night.day, s.short, t.name, step, r.employee, r.time, night.closedAt]);
@@ -939,7 +1052,7 @@ function renderReport() {
 
   // Missed steps are only counted for the whole team: without a schedule, nobody knows
   // whose step it was. Square shifts would make this per person.
-  const team = state.nights.map(n => progress(n.day, n.records));
+  const team = state.nights.map(n => progress(n.date, n.records));
   const done = team.reduce((sum, p) => sum + p.done, 0);
   const total = team.reduce((sum, p) => sum + p.total, 0);
 
@@ -980,17 +1093,77 @@ function renderReport() {
           <button class="remove-emp" data-name="${esc(e)}">Remove</button></div>`).join('')}
       </div>
     </details>
+    ${taskEditor()}
     <div class="actions"><button id="change-code">Change passcode</button></div>`;
 }
 
+// ---- Owner: add tasks and subcategories ----
+// The Owner page calls a step a "task", and a task a "subcategory".
+
+let addMode = '';         // 'task' or 'subcategory', picked from the Add dropdown
+const ADD_CHOICES = ['Add task', 'Add subcategory'];
+let addShift = 'opening', addTask = ''; // kept after Add, for adding several in a row
+const CATEGORIES = [...SHIFTS.map(s => ({ id: s.id, label: s.label })), { id: 'weekly', label: 'Weekly Tasks' }];
+
+// Subcategories of a category, each with its steps. The check log is a table, so nothing is added to it.
+function subcategories(id) {
+  const { shifts, weekly } = taskTree(isoDate(new Date()));
+  if (id === 'weekly') return DAYS.map(d => ({ name: d, steps: weekly[d] }));
+  return shifts.find(s => s.id === id).tasks.filter(t => !t.checkLog);
+}
+const subOptions = (id, picked) => subcategories(id).map(t =>
+  `<option ${t.name === picked ? 'selected' : ''}>${esc(t.name)}</option>`).join('');
+const catOptions = picked => CATEGORIES.map(c =>
+  `<option value="${c.id}" ${c.id === picked ? 'selected' : ''}>${esc(c.label)}</option>`).join('');
+
+function taskEditor() {
+  const count = CATEGORIES.reduce((n, c) => n + subcategories(c.id).reduce((m, t) => m + t.steps.length, 0), 0);
+  // Weekly's subcategories are the days of the week, so new subcategories go in the shifts only.
+  const shiftOptions = CATEGORIES.filter(c => c.id !== 'weekly').map(c =>
+    `<option value="${c.id}" ${c.id === addShift ? 'selected' : ''}>${esc(c.label)}</option>`).join('');
+  const body = addMode === 'task'
+    ? `<form id="add-task" class="task-form">
+        <label class="wide">Task title<input id="task-title" type="text"
+          autocomplete="off" autocapitalize="sentences" spellcheck="true"></label>
+        <label>Category<select id="task-cat">${catOptions(addShift)}</select></label>
+        <label>Subcategory<select id="task-sub">${subOptions(addShift, addTask)}</select></label>
+        <button type="submit" class="wide">Add Task</button>
+      </form>`
+    : addMode === 'subcategory'
+      ? `<form id="add-sub" class="task-form">
+          <label>Subcategory name<input id="sub-name" type="text"
+            autocomplete="off" autocapitalize="words" spellcheck="true"></label>
+          <label>Category<select id="sub-cat">${shiftOptions}</select></label>
+          <button type="submit" class="wide">Add Subcategory</button>
+        </form>`
+      : '';
+  return `<details class="section" data-id="tasks" ${openIds.has('tasks') ? 'open' : ''}>
+    <summary><span class="label">Update Tasks</span><span class="count">${count} tasks</span></summary>
+    <div class="report-body">
+      <div class="actions">
+        <button id="add-mode" class="${addMode ? 'on' : ''}">Add</button>
+        <button id="edit-mode">Edit</button>
+        <button id="delete-mode">Delete</button>
+      </div>
+      ${body}
+    </div>
+  </details>`;
+}
+
+function addStep(shift, task, step) {
+  state.taskChanges.push({ on: isoDate(new Date()), kind: 'addTask', shift, task, step });
+  save();
+  render();
+}
+
 function nightReport(night, i) {
-  const p = progress(night.day, night.records);
+  const p = progress(night.date, night.records);
   const id = `night-${i}`;
   return `<details class="section" data-id="${id}" ${openIds.has(id) ? 'open' : ''}>
     <summary><span class="label">${esc(dateLabel(fromIso(night.date)))} — finished ${esc(night.closedAt)}</span>
       <span class="count">${p.done} of ${p.total} signed</span></summary>
     <div class="report-body">
-      ${sectionsFor(night.day).map(s => `<h4>${esc(s.short)}</h4>
+      ${sectionsFor(night.date).map(s => `<h4>${esc(s.short)}</h4>
         <table><tr><th>Task</th><th>Step</th><th>Signed by</th></tr>
           ${s.tasks.flatMap(t => t.steps.map(step => {
             const rows = signers(night.records, s.short, t.name, step);
@@ -1135,6 +1308,21 @@ $('#sections').addEventListener('input', e => {
 });
 
 $('#sections').addEventListener('click', e => {
+  if (mode === 'delete') {
+    const x = e.target.closest('.del-x');
+    if (!x) return;
+    e.preventDefault(); // a subcategory's × sits on its dropdown's title row; don't toggle it
+    if (x.dataset.p === undefined) deleteSub(x);
+    else deleteStep(x);
+    return;
+  }
+  if (mode === 'edit') {
+    // A subcategory's box sits on its dropdown's title row: tapping it shouldn't close the dropdown.
+    // Typing a space in it also "taps" the title row, so ignore taps while a box there is focused.
+    const summary = e.target.closest('summary');
+    if (e.target.classList.contains('edit-text') || (summary && summary.contains(document.activeElement))) e.preventDefault();
+    return;
+  }
   const check = e.target.closest('.log-check');
   if (check) return toggleLogCheck(+check.dataset.r, +check.dataset.a);
   const assign = e.target.closest('.log-assign');
@@ -1145,7 +1333,7 @@ $('#sections').addEventListener('click', e => {
   if (head) return twoTap(head, 'Tap again to clear', () => clearBreakColumn(+head.dataset.c));
   const el = e.target.closest('[data-s]');
   if (!el) return;
-  const s = sectionsFor(renderedDay)[el.dataset.s];
+  const s = sectionsFor(renderedDate)[el.dataset.s];
   const t = s.tasks[el.dataset.t];
   const p = t.steps[el.dataset.p];
 
@@ -1167,6 +1355,13 @@ $('#sections').addEventListener('click', e => {
 $('#report').addEventListener('click', e => {
   if (e.target.id === 'undo-close') twoTap(e.target, 'Tap again to undo', undoClose);
   if (e.target.id === 'change-code') changePasscode();
+  if (e.target.id === 'edit-mode') setMode('edit');
+  if (e.target.id === 'delete-mode') setMode('delete');
+  if (e.target.id === 'add-mode') openMenu(e.target, 'Add', [], picked => {
+    addMode = picked === 'Add task' ? 'task' : 'subcategory';
+    if (addShift === 'weekly' && addMode === 'subcategory') addShift = 'opening';
+    renderReport();
+  }, false, ADD_CHOICES, x => x);
   if (e.target.classList.contains('remove-emp')) {
     const name = e.target.dataset.name;
     twoTap(e.target, 'Tap again to remove', () => {
@@ -1178,8 +1373,39 @@ $('#report').addEventListener('click', e => {
   }
 });
 
+$('#report').addEventListener('change', e => {
+  // New category: show its subcategories without redrawing, so the typed title stays.
+  if (e.target.id === 'task-cat') { addShift = e.target.value; addTask = ''; $('#task-sub').innerHTML = subOptions(addShift); }
+  if (e.target.id === 'task-sub') addTask = e.target.value;
+});
+
 $('#report').addEventListener('submit', e => {
   e.preventDefault();
+  if (e.target.id === 'add-task') {
+    const step = $('#task-title').value.trim().replace(/\s+/g, ' ');
+    const shift = $('#task-cat').value;
+    const task = $('#task-sub').value;
+    if (!step) return toast('Enter a task title.');
+    if (subcategories(shift).find(t => t.name === task).steps.some(x => x.toLowerCase() === step.toLowerCase()))
+      return toast(`${task} already has that task.`);
+    addTask = task;
+    addStep(shift, task, step);
+    return toast(`Added to ${task}.`);
+  }
+  if (e.target.id === 'add-sub') {
+    const name = $('#sub-name').value.trim().replace(/\s+/g, ' ');
+    const shift = $('#sub-cat').value;
+    if (!name) return toast('Enter a subcategory name.');
+    const existing = subcategories(shift).find(t => t.name.toLowerCase() === name.toLowerCase());
+    if (existing || name.toLowerCase() === LOG_TASK.toLowerCase())
+      return toast(`${CATEGORIES.find(c => c.id === shift).label} already has ${existing ? existing.name : LOG_TASK}.`);
+    state.taskChanges.push({ on: isoDate(new Date()), kind: 'addSub', shift, name });
+    addShift = shift;
+    addTask = name; // picked already if the owner switches to Add task next
+    save();
+    render();
+    return toast(`Added ${name} to ${CATEGORIES.find(c => c.id === shift).label}.`);
+  }
   const first = $('#first-name').value.trim().replace(/\s+/g, ' ');
   const last = $('#last-name').value.trim().replace(/\s+/g, ' ');
   if (!first || !last) return toast('Enter a first and last name.');
@@ -1197,6 +1423,118 @@ $('#owner').addEventListener('click', () => {
   if (document.body.classList.contains('owner-mode')) showOwnerPage(false);
   else openPasscode();
 });
+
+// ---- Edit and Delete modes: the owner changes tasks right on the main page ----
+
+// This visit's changes, newest last, for Undo: { change, moved: [[record, field, old value]] }.
+let undoStack = [];
+
+function setMode(m) {
+  if (document.activeElement) document.activeElement.blur(); // saves the box being typed in
+  mode = m;
+  undoStack = [];
+  document.body.classList.toggle('changing', !!m);
+  document.body.classList.toggle('owner-mode', !m);
+  $('#owner').textContent = 'Back to Checklist';
+  $('#mode-banner').textContent = m === 'edit'
+    ? "Editing mode: tap any task or subcategory name to change its wording. Tap Done when you're finished."
+    : "Delete mode: tap × beside a task or subcategory to delete it. Tap Done when you're finished.";
+  updateUndo();
+  render();
+  scrollTo(0, 0);
+}
+
+function pushChange(change, moved = []) {
+  state.taskChanges.push(change);
+  undoStack.push({ change, moved, open: new Set(openIds) }); // open: which dropdowns were open before
+  save();
+  updateUndo();
+}
+
+function updateUndo() { $('#undo').disabled = !undoStack.length; }
+
+function undoLast() {
+  const last = undoStack.pop();
+  if (!last) return;
+  const i = state.taskChanges.lastIndexOf(last.change);
+  if (i >= 0) state.taskChanges.splice(i, 1);
+  for (const [r, field, old] of last.moved) r[field] = old;
+  if (last.change.kind === 'removeSub') { openIds.clear(); last.open.forEach(id => openIds.add(id)); }
+  save();
+  updateUndo();
+  render();
+  toast('Undone.');
+}
+
+// Today's sign-offs on a deleted task stay saved (they still count in the totals), and come back with Undo.
+function deleteStep(x) {
+  const s = sectionsFor(renderedDate)[x.dataset.s];
+  const t = s.tasks[x.dataset.t];
+  const step = t.steps[x.dataset.p];
+  pushChange({ on: isoDate(new Date()), kind: 'removeTask', shift: s.id, task: t.name, step });
+  render();
+  toast(`Deleted ${step}.`);
+}
+
+// Deletes a subcategory and all its tasks. Today's sign-offs stay saved, as with a task.
+function deleteSub(x) {
+  const s = sectionsFor(renderedDate)[x.dataset.s];
+  const t = s.tasks[x.dataset.t];
+  pushChange({ on: isoDate(new Date()), kind: 'removeSub', shift: s.id, name: t.name });
+  if (addTask === t.name) addTask = '';
+  // Open dropdowns are kept by position: the ones below this subcategory move up one.
+  const ti = +x.dataset.t;
+  const open = [...openIds].filter(id => id.startsWith(`${s.id}-`)).map(id => +id.slice(s.id.length + 1));
+  open.forEach(i => openIds.delete(`${s.id}-${i}`));
+  open.filter(i => i !== ti).forEach(i => openIds.add(`${s.id}-${i > ti ? i - 1 : i}`));
+  render();
+  toast(`Deleted ${t.name}.`);
+}
+
+// Today's sign-offs move to the new wording. Past days keep the old one.
+function todaysRecords() {
+  const closed = closedToday();
+  if (!closed) return state.pending;
+  const unsent = state.unsent.filter(u => u.date === closed.date && u.closedAt === closed.closedAt);
+  return [...state.pending, ...closed.records, ...unsent.flatMap(u => u.records)];
+}
+
+// Saves a changed box. The page isn't redrawn, so tapping straight into the next box works.
+function saveWording(input) {
+  const s = sectionsFor(renderedDate)[input.dataset.s];
+  const t = s.tasks[input.dataset.t];
+  const isSub = input.classList.contains('edit-sub');
+  const from = isSub ? t.name : t.steps[input.dataset.p];
+  const to = input.value.trim().replace(/\s+/g, ' ');
+  const undo = msg => { input.value = from; toast(msg); };
+  if (to === from) return void (input.value = from);
+  if (!to) return undo("Wording can't be empty.");
+  const siblings = isSub ? s.tasks.map(x => x.name) : t.steps;
+  if (siblings.some(x => x !== from && x.toLowerCase() === to.toLowerCase()))
+    return undo(`${isSub ? s.label : t.name} already has ${to}.`);
+  const on = isoDate(new Date());
+  const moved = [];
+  const move = (r, field) => { moved.push([r, field, r[field]]); r[field] = to; };
+  if (isSub) {
+    for (const r of todaysRecords()) if (r.shift === s.short && r.task === from) move(r, 'task');
+    if (addTask === from) addTask = to;
+    pushChange({ on, kind: 'renameSub', shift: s.id, from, to }, moved);
+  } else {
+    for (const r of todaysRecords()) if (r.shift === s.short && r.task === t.name && r.step === from) move(r, 'step');
+    pushChange({ on, kind: 'renameTask', shift: s.id, task: t.name, from, to }, moved);
+  }
+  input.value = to;
+  toast('Saved.');
+}
+
+$('#sections').addEventListener('change', e => {
+  if (e.target.classList.contains('edit-text')) saveWording(e.target);
+});
+$('#sections').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.classList.contains('edit-text')) e.target.blur();
+});
+$('#done').addEventListener('click', () => setMode(''));
+$('#undo').addEventListener('click', undoLast);
 
 // Owner only: reopen today's checklist with everyone's names put back.
 // If the Google Sheet already got this week, finishing again replaces that week's tab.
