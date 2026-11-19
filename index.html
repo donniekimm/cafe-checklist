@@ -89,6 +89,40 @@
   body.changing #mode-banner { display: block; }
   body.changing .step { grid-template-columns: minmax(0, 1fr); padding: 8px 0; }
   body.changing .log-scroll, body.changing .break-wrap { opacity: 0.5; pointer-events: none; }
+  /* Log mode: the owner fills in a past day. Send Data top-left (only once something changed), Done top-right */
+  #send { display: none; height: 48px; padding: 0 20px; border-radius: 6px; background: var(--blue); color: #fff; font-weight: 600; white-space: nowrap; }
+  #send:active { background: var(--blue-dark); }
+  body.logging.dirty #send, body.logging #done { display: block; }
+  body.logging #done { background: var(--fill); color: var(--ink); white-space: nowrap; }
+  body.logging #done:active { background: var(--line); }
+  body.logging #close, body.logging #owner { display: none; }
+  body.logging #day { color: var(--blue); font-size: 18px; font-weight: 700; }
+  body.logging #mode-banner { display: block; }
+  /* Log calendar on the Owner page: one month at a time, past days only */
+  .cal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .cal-head b { font-size: 19px; font-weight: 600; }
+  .cal-arrow { width: 48px; height: 48px; border-radius: 6px; background: var(--fill); color: var(--blue); font-size: 26px; font-weight: 600; }
+  .cal-arrow:active { background: var(--line); }
+  .cal-arrow:disabled { color: #c4c4c4; }
+  .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+  .cal .dow { padding: 4px 0; color: var(--muted); font-size: 13px; font-weight: 600; text-align: center; }
+  .cal-day {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-height: 60px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #fff;
+    font-weight: 600;
+  }
+  .cal-day small { color: var(--green); font-size: 12px; font-weight: 500; }
+  .cal-day:active { background: var(--blue-tint); }
+  .cal-day:disabled { background: var(--page); color: #c4c4c4; }
+  .cal-day.today { border-color: var(--blue); }
+  .cal-note { color: var(--muted); font-size: 15px; }
   .del-row { display: flex; align-items: center; gap: 12px; }
   .edit-text.fixed { display: flex; align-items: center; }
   .del-x {
@@ -451,6 +485,7 @@
 </head>
 <body>
 <div id="topbar">
+  <button id="send">Send Data</button>
   <button id="undo">Undo</button>
   <button id="owner">Owner</button>
   <div id="day"></div>
@@ -578,10 +613,11 @@ const emptyBreaks = () => ({ date: '', rows: Array.from({ length: BREAK_ROWS }, 
 // log: today's check log extras, one row per time: [assigned to, notes].
 // The Restroom and Lobby & Floor boxes are ordinary sign-offs, so they reach the report and sheet.
 const emptyLog = () => ({ date: '', rows: LOG_TIMES.map(() => ['', '']) });
-const emptyState = () => ({ pending: [], nights: [], unsent: [], employees: [...DEFAULT_EMPLOYEES], ownerCode: OWNER_CODE, breaks: emptyBreaks(), log: emptyLog(), initials: {}, taskChanges: [] });
+const emptyState = () => ({ pending: [], nights: [], unsent: [], employees: [...DEFAULT_EMPLOYEES], ownerCode: OWNER_CODE, breaks: emptyBreaks(), log: emptyLog(), initials: {}, taskChanges: [], sendNow: [] });
 let state = load();
 const openIds = new Set();
-let renderedDate = '';
+let renderedDate = ''; // the date the checklist shows: today, or a past day in log mode
+let clockDate = '';    // today, as of the last clock check
 
 function load() {
   try {
@@ -633,6 +669,7 @@ function currentShift(d) {
 
 function renderClock() {
   const d = new Date();
+  if (mode === 'log') return void ($('#day').textContent = `Logging ${dateLabel(fromIso(logDraft.date))}`);
   if (mode) return void ($('#day').textContent = mode === 'edit' ? 'Editing Mode' : 'Delete Mode');
   $('#day').textContent = `${dateLabel(d)} · ${timeLabel(d)} · ${currentShift(d)}`;
 }
@@ -699,18 +736,39 @@ function closedToday() {
   return last && last.date === isoDate(new Date()) ? last : null;
 }
 
-// '' normally; 'edit' or 'delete' while the owner changes tasks on the main page.
+// '' normally; 'edit' or 'delete' while the owner changes tasks on the main page;
+// 'log' while the owner fills in a past day.
 let mode = '';
 
+// Log mode: a copy of the past day being filled in. Nothing is kept until Send Data.
+//   { date, records, breaks, log, dirty }   dirty: changed since opened or last sent
+let logDraft = null;
+const LOGGED = 'Logged by owner'; // "Closed at" for a day the owner logged, and the time on its sign-offs
+const copy = x => JSON.parse(JSON.stringify(x));
+
+// The day the main page is working on: today, or the past day being logged.
+const dayDate = () => (logDraft ? logDraft.date : isoDate(new Date()));
+const liveRecords = () => (logDraft ? logDraft.records : state.pending);
+const signTime = () => (logDraft ? LOGGED : timeLabel(new Date()));
+
+// Saves a sign-off change. In log mode it only marks the day as changed, so Send Data shows.
+function changed() {
+  if (logDraft) {
+    logDraft.dirty = true;
+    document.body.classList.add('dirty');
+  }
+  save();
+}
+
 function render() {
-  renderedDate = isoDate(new Date());
+  renderedDate = dayDate();
   const edit = mode === 'edit';
   const del = mode === 'delete';
   renderClock();
-  const closed = closedToday();
-  const records = closed ? closed.records : state.pending;
+  const closed = logDraft ? null : closedToday();
+  const records = logDraft ? logDraft.records : closed ? closed.records : state.pending;
   const today = progress(renderedDate, records);
-  $('#progress').textContent = `${today.done} of ${today.total} steps signed today`;
+  $('#progress').textContent = `${today.done} of ${today.total} steps signed ${logDraft ? `on ${dateLabel(fromIso(renderedDate))}` : 'today'}`;
   $('#bar').style.width = `${today.done / today.total * 100}%`;
 
   const close = $('#close');
@@ -749,7 +807,7 @@ function render() {
               ? `<input class="edit-text edit-sub" data-s="${si}" data-t="${ti}" value="${esc(t.name)}"
                 aria-label="Subcategory wording" autocomplete="off" autocapitalize="words">`
               : esc(t.name)}</span>
-            ${closed || mode || t.checkLog || !t.steps.length ? '' : `<button class="check-off" data-s="${si}" data-t="${ti}">Sign all steps</button>`}
+            ${closed || edit || del || t.checkLog || !t.steps.length ? '' : `<button class="check-off" data-s="${si}" data-t="${ti}">Sign all steps</button>`}
             <span class="count">${signed} of ${t.steps.length}</span>
             ${del && !t.checkLog ? `<button class="del-x" data-s="${si}" data-t="${ti}" aria-label="Delete ${esc(t.name)}">×</button>` : ''}
           </summary>
@@ -782,8 +840,8 @@ function openMenu(btn, title, signed, onPick, alignRight, choices = state.employ
 
 // Popup from a name on a step: each time that person signed it. Remove is there until the day is finished.
 function openTimes(chip, s, t, p, name) {
-  const closed = closedToday();
-  const rows = signers(closed ? closed.records : state.pending, s.short, t.name, p).filter(r => r.employee === name);
+  const closed = logDraft ? null : closedToday();
+  const rows = signers(closed ? closed.records : liveRecords(), s.short, t.name, p).filter(r => r.employee === name);
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
   overlay.innerHTML = `<div class="menu"><div class="head">${esc(initialsOf(name))}</div>${rows.map(r => `<div class="time-row">
@@ -819,7 +877,7 @@ function nameChips(records, s, t, p, at) {
 
 // ---- Lobby / Restroom check log (filled in by hand; resets with the checklist) ----
 
-const logRows = () => (state.log.date === isoDate(new Date()) ? state.log.rows : emptyLog().rows);
+const logRows = () => (logDraft ? logDraft.log : state.log.date === isoDate(new Date()) ? state.log.rows : emptyLog().rows);
 
 function logBody(records, closed) {
   const rows = closed ? closed.log || emptyLog().rows : logRows();
@@ -849,24 +907,25 @@ const logChecks = (records, r, a) => records.filter(x => x.task === LOG_TASK && 
 
 function setLogCheck(r, a, time) {
   const step = logStep(r, a);
-  state.pending = state.pending.filter(x => !(x.task === LOG_TASK && x.step === step));
+  const records = liveRecords();
+  for (let i = records.length - 1; i >= 0; i--) if (records[i].task === LOG_TASK && records[i].step === step) records.splice(i, 1);
   if (!time) return;
-  const d = new Date();
+  const date = dayDate();
   const assigned = logRows()[r][0];
   for (const employee of assigned ? assigned.split(' / ') : [UNASSIGNED]) {
-    state.pending.push({ date: isoDate(d), day: weekday(d), shift: 'Mid-Shift', task: LOG_TASK, step, employee, time });
+    records.push({ date, day: weekday(fromIso(date)), shift: 'Mid-Shift', task: LOG_TASK, step, employee, time });
   }
 }
 
 function toggleLogCheck(r, a) {
-  setLogCheck(r, a, logChecks(state.pending, r, a).length ? null : timeLabel(new Date()));
-  save();
+  setLogCheck(r, a, logChecks(liveRecords(), r, a).length ? null : signTime());
+  changed();
   render();
 }
 
 function saveLog(rows) {
-  state.log = rows.flat().some(Boolean) ? { date: isoDate(new Date()), rows } : emptyLog();
-  save();
+  if (!logDraft) state.log = rows.flat().some(Boolean) ? { date: isoDate(new Date()), rows } : emptyLog();
+  changed();
 }
 
 // Assigned To can hold more than one person, like "ZP/MO" on paper.
@@ -879,17 +938,17 @@ function openAssignMenu(cell) {
     saveLog(rows);
     // Boxes already green move to the new person, keeping the time they were checked.
     LOG_AREAS.forEach((area, a) => {
-      const checked = logChecks(state.pending, r, a)[0];
+      const checked = logChecks(liveRecords(), r, a)[0];
       if (checked) setLogCheck(r, a, checked.time);
     });
-    save();
+    changed();
     render();
   }, false, names.length ? ['Clear', ...state.employees] : state.employees);
 }
 
 // ---- Break schedule (filled in by hand each day; resets with the checklist) ----
 
-const breakRows = () => (state.breaks.date === isoDate(new Date()) ? state.breaks.rows : emptyBreaks().rows);
+const breakRows = () => (logDraft ? logDraft.breaks : state.breaks.date === isoDate(new Date()) ? state.breaks.rows : emptyBreaks().rows);
 
 function breakSection(closed) {
   const rows = closed ? closed.breaks || emptyBreaks().rows : breakRows();
@@ -909,8 +968,8 @@ function breakSection(closed) {
 }
 
 function saveBreaks(rows) {
-  state.breaks = rows.flat().some(Boolean) ? { date: isoDate(new Date()), rows } : emptyBreaks();
-  save();
+  if (!logDraft) state.breaks = rows.flat().some(Boolean) ? { date: isoDate(new Date()), rows } : emptyBreaks();
+  changed();
   render();
 }
 
@@ -937,24 +996,26 @@ function openBreakMenu(cell) {
 }
 
 function signOff(s, t, steps, employee) {
-  const d = new Date();
+  const date = dayDate();
+  const records = liveRecords();
   for (const p of steps) {
     // Mid-Shift tasks repeat, so the same person can sign again. Everything else is once a day.
-    if (!s.repeats && signers(state.pending, s.short, t.name, p).some(r => r.employee === employee)) continue;
-    state.pending.push({
-      date: isoDate(d), day: weekday(d), shift: s.short, task: t.name, step: p, employee, time: timeLabel(d),
+    if (!s.repeats && signers(records, s.short, t.name, p).some(r => r.employee === employee)) continue;
+    records.push({
+      date, day: weekday(fromIso(date)), shift: s.short, task: t.name, step: p, employee, time: signTime(),
     });
   }
-  save();
+  changed();
   render();
 }
 
 // Removes one sign-off: a person can have several on a Mid-Shift step.
 function removeSignOff(s, t, p, employee, time) {
-  const i = state.pending.findIndex(r =>
+  const records = liveRecords();
+  const i = records.findIndex(r =>
     r.shift === s.short && r.task === t.name && r.step === p && r.employee === employee && r.time === time);
-  if (i >= 0) state.pending.splice(i, 1);
-  save();
+  if (i >= 0) records.splice(i, 1);
+  changed();
   render();
 }
 
@@ -966,9 +1027,10 @@ const mondayOf = iso => {
   return isoDate(d);
 };
 
-// A week goes out once Sunday is finished, or once it's over if nobody finished Sunday.
+// A week goes out once Sunday is finished, or once it's over if nobody finished Sunday,
+// or right away after the owner logs a day in it (Send Data).
 function weekIsDue(monday) {
-  return mondayOf(isoDate(new Date())) !== monday
+  return mondayOf(isoDate(new Date())) !== monday || state.sendNow.includes(monday)
     || state.nights.some(n => n.day === 'Sunday' && mondayOf(n.date) === monday);
 }
 
@@ -990,10 +1052,12 @@ function sheetRows(night) {
   return rows;
 }
 
-let flushing = false;
+let flushing = false, flushAgain = false;
 async function flushSheet() {
-  if (!SHEET_URL || flushing) return;
+  if (!SHEET_URL) return;
+  if (flushing) return void (flushAgain = true);
   flushing = true;
+  flushAgain = false;
   for (const monday of new Set(state.unsent.map(n => mondayOf(n.date)))) {
     if (!weekIsDue(monday)) continue;
     // Always the whole week, so resending after "Undo finish" replaces the tab cleanly.
@@ -1006,10 +1070,12 @@ async function flushSheet() {
       break; // offline; try again later
     }
     state.unsent = state.unsent.filter(n => mondayOf(n.date) !== monday);
+    state.sendNow = state.sendNow.filter(m => m !== monday);
     save();
   }
   flushing = false;
   renderReport();
+  if (flushAgain) flushSheet();
 }
 
 // Any day not finished by 12:00 AM finishes itself with whatever was signed off. Runs on opening
@@ -1094,6 +1160,7 @@ function renderReport() {
       </div>
     </details>
     ${taskEditor()}
+    ${logCalendar()}
     <div class="actions"><button id="change-code">Change passcode</button></div>`;
 }
 
@@ -1150,6 +1217,72 @@ function taskEditor() {
   </details>`;
 }
 
+// ---- Owner: log a past day ----
+// A month calendar, past days only. Tapping a day opens it on the main page in log mode.
+
+const now0 = new Date();
+let calMonth = [now0.getFullYear(), now0.getMonth()]; // the month shown: [year, month 0-11]
+
+function logCalendar() {
+  const now = new Date();
+  const [y, m] = calMonth;
+  const current = y === now.getFullYear() && m === now.getMonth();
+  const today = isoDate(now);
+  const blanks = (new Date(y, m, 1).getDay() + 6) % 7; // weeks start on Monday, like the sheet
+  const days = new Date(y, m + 1, 0).getDate();
+  const cells = Array.from({ length: days }, (_, i) => {
+    const date = isoDate(new Date(y, m, i + 1));
+    const night = state.nights.find(n => n.date === date);
+    const p = night && progress(date, night.records);
+    return `<button class="cal-day${date === today ? ' today' : ''}" data-date="${date}" ${date >= today ? 'disabled' : ''}
+      aria-label="${esc(dateLabel(fromIso(date)))}">${i + 1}${p ? `<small>${p.done}/${p.total}</small>` : ''}</button>`;
+  });
+  return `<details class="section" data-id="log" ${openIds.has('log') ? 'open' : ''}>
+    <summary><span class="label">Log</span><span class="count">Fill in a past day</span></summary>
+    <div class="report-body">
+      <div class="cal-head">
+        <button class="cal-arrow" data-step="-1" aria-label="Previous month">‹</button>
+        <b>${esc(new Date(y, m, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }))}</b>
+        <button class="cal-arrow" data-step="1" aria-label="Next month" ${current ? 'disabled' : ''}>›</button>
+      </div>
+      <div class="cal">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => `<span class="dow">${d}</span>`).join('')}
+        ${'<span></span>'.repeat(blanks)}${cells.join('')}</div>
+      <p class="cal-note">Tap a past day to open its checklist. Green numbers are steps already signed that day.</p>
+    </div>
+  </details>`;
+}
+
+function openLog(date) {
+  const night = state.nights.find(n => n.date === date);
+  logDraft = { date, dirty: false, records: copy(night ? night.records : []),
+    breaks: copy(night?.breaks || emptyBreaks().rows), log: copy(night?.log || emptyLog().rows) };
+  setMode('log');
+}
+
+// Send Data: keeps the logged day in the Owner Report and sends its week to the Google Sheet now.
+// A day already reported keeps its "Closed at"; a day nobody finished shows "Logged by owner".
+function sendLog() {
+  const d = logDraft;
+  const i = state.nights.findIndex(n => n.date === d.date);
+  const night = { date: d.date, day: weekday(fromIso(d.date)), closedAt: i >= 0 ? state.nights[i].closedAt : LOGGED,
+    records: copy(d.records), breaks: copy(d.breaks), log: copy(d.log) };
+  if (i >= 0) state.nights[i] = night;
+  else {
+    const at = state.nights.findIndex(n => n.date > d.date); // keep days in date order
+    state.nights.splice(at < 0 ? state.nights.length : at, 0, night);
+  }
+  state.unsent = [...state.unsent.filter(u => u.date !== d.date), night];
+  const monday = mondayOf(d.date);
+  if (!state.sendNow.includes(monday)) state.sendNow.push(monday);
+  d.dirty = false;
+  document.body.classList.remove('dirty');
+  $('#done').textContent = 'Done';
+  save();
+  flushSheet();
+  render();
+  toast(SHEET_URL ? `Saved. Week of ${monday} sent to the Google Sheet.` : 'Saved to the Owner Report.');
+}
+
 function addStep(shift, task, step) {
   state.taskChanges.push({ on: isoDate(new Date()), kind: 'addTask', shift, task, step });
   save();
@@ -1160,7 +1293,7 @@ function nightReport(night, i) {
   const p = progress(night.date, night.records);
   const id = `night-${i}`;
   return `<details class="section" data-id="${id}" ${openIds.has(id) ? 'open' : ''}>
-    <summary><span class="label">${esc(dateLabel(fromIso(night.date)))} — finished ${esc(night.closedAt)}</span>
+    <summary><span class="label">${esc(dateLabel(fromIso(night.date)))} — ${night.closedAt === LOGGED ? 'logged by owner' : `finished ${esc(night.closedAt)}`}</span>
       <span class="count">${p.done} of ${p.total} signed</span></summary>
     <div class="report-body">
       ${sectionsFor(night.date).map(s => `<h4>${esc(s.short)}</h4>
@@ -1338,16 +1471,16 @@ $('#sections').addEventListener('click', e => {
   const p = t.steps[el.dataset.p];
 
   if (el.classList.contains('chip')) return openTimes(el, s, t, p, el.dataset.name);
-  if (closedToday()) return;
+  if (!logDraft && closedToday()) return;
 
   if (el.classList.contains('do')) {
-    const signedStep = s.repeats ? [] : signers(state.pending, s.short, t.name, p).map(r => r.employee);
+    const signedStep = s.repeats ? [] : signers(liveRecords(), s.short, t.name, p).map(r => r.employee);
     openMenu(el, p, signedStep, name => signOff(s, t, [p], name));
   } else if (el.classList.contains('check-off')) {
     e.preventDefault(); // it sits on the dropdown's title row; don't close the dropdown
     // ✓ only for people already signed on every step of this task.
     const signedAll = s.repeats ? [] : state.employees.filter(e => t.steps.every(step =>
-      signers(state.pending, s.short, t.name, step).some(r => r.employee === e)));
+      signers(liveRecords(), s.short, t.name, step).some(r => r.employee === e)));
     openMenu(el, `${t.name}: sign all steps`, signedAll, name => signOff(s, t, t.steps, name), true);
   }
 });
@@ -1355,6 +1488,14 @@ $('#sections').addEventListener('click', e => {
 $('#report').addEventListener('click', e => {
   if (e.target.id === 'undo-close') twoTap(e.target, 'Tap again to undo', undoClose);
   if (e.target.id === 'change-code') changePasscode();
+  const arrow = e.target.closest('.cal-arrow');
+  if (arrow) {
+    const d = new Date(calMonth[0], calMonth[1] + +arrow.dataset.step, 1);
+    calMonth = [d.getFullYear(), d.getMonth()];
+    renderReport();
+  }
+  const day = e.target.closest('.cal-day');
+  if (day) openLog(day.dataset.date);
   if (e.target.id === 'edit-mode') setMode('edit');
   if (e.target.id === 'delete-mode') setMode('delete');
   if (e.target.id === 'add-mode') openMenu(e.target, 'Add', [], picked => {
@@ -1432,13 +1573,20 @@ let undoStack = [];
 function setMode(m) {
   if (document.activeElement) document.activeElement.blur(); // saves the box being typed in
   mode = m;
+  if (m !== 'log') logDraft = null;
   undoStack = [];
-  document.body.classList.toggle('changing', !!m);
+  document.body.classList.toggle('changing', m === 'edit' || m === 'delete');
+  document.body.classList.toggle('logging', m === 'log');
+  document.body.classList.remove('dirty');
   document.body.classList.toggle('owner-mode', !m);
   $('#owner').textContent = 'Back to Checklist';
-  $('#mode-banner').textContent = m === 'edit'
-    ? "Editing mode: tap any task or subcategory name to change its wording. Tap Done when you're finished."
-    : "Delete mode: tap × beside a task or subcategory to delete it. Tap Done when you're finished.";
+  $('#done').textContent = 'Done';
+  delete $('#done').dataset.armed;
+  $('#mode-banner').textContent = m === 'log'
+    ? `Logging ${dateLabel(fromIso(logDraft.date))}: sign steps the same way as on the checklist. Tap Send Data to keep them and send them to the Google Sheet. Done without Send Data throws the changes away.`
+    : m === 'edit'
+      ? "Editing mode: tap any task or subcategory name to change its wording. Tap Done when you're finished."
+      : "Delete mode: tap × beside a task or subcategory to delete it. Tap Done when you're finished.";
   updateUndo();
   render();
   scrollTo(0, 0);
@@ -1533,7 +1681,11 @@ $('#sections').addEventListener('change', e => {
 $('#sections').addEventListener('keydown', e => {
   if (e.key === 'Enter' && e.target.classList.contains('edit-text')) e.target.blur();
 });
-$('#done').addEventListener('click', () => setMode(''));
+$('#done').addEventListener('click', e => {
+  if (mode === 'log' && logDraft.dirty) return twoTap(e.currentTarget, 'Tap again to discard', () => setMode(''));
+  setMode('');
+});
+$('#send').addEventListener('click', sendLog);
 $('#undo').addEventListener('click', undoLast);
 
 // Owner only: reopen today's checklist with everyone's names put back.
@@ -1575,7 +1727,9 @@ $('#close').addEventListener('click', e => {
 // Keep the clock current. At 12:00 AM: finish the day if nobody did, then redraw for the new day
 // (unlocks the checklist, and weekly tasks differ by day).
 setInterval(() => {
-  if (isoDate(new Date()) === renderedDate) return renderClock();
+  const today = isoDate(new Date());
+  if (today === clockDate) return renderClock();
+  clockDate = today;
   autoFinish();
   render();
   flushSheet();
@@ -1584,6 +1738,7 @@ setInterval(() => {
 // Retry any nights the Google Sheet missed, whenever the iPad is back online.
 addEventListener('online', flushSheet);
 
+clockDate = isoDate(new Date());
 autoFinish();
 render();
 flushSheet();
